@@ -347,6 +347,64 @@ argument parser.
 The formulation API can still expose convenient syntax like `constrain(corn_max = 0.65)`, but it
 should resolve to structured limit records internally.
 
+#### `constraint_sets`
+Named sets of formulation constraints. Ingredient min/max bounds are not enough for real diet
+formulation; nutritionists need arbitrary linear constraints across ingredients, ingredient groups,
+nutrients, and nutrient ratios.
+
+| column | type | notes |
+|---|---|---|
+| constraint_set_id | VARCHAR PK | e.g. "swine_grower_standard_limits" |
+| species | VARCHAR | "swine", "poultry", etc. |
+| production_class | VARCHAR | "nursery", "grower", "finisher", "sow", etc. |
+| description | VARCHAR | |
+| source_type | VARCHAR | "reference", "user", "project_override" |
+| source_id | VARCHAR | provenance |
+| project_id | VARCHAR | optional project/client scope |
+| created_at | TIMESTAMP | |
+
+#### `constraints`
+One row per logical constraint. These compile into LP matrix rows.
+
+| column | type | notes |
+|---|---|---|
+| constraint_id | VARCHAR PK | UUID |
+| constraint_set_id | VARCHAR | FK → constraint_sets |
+| constraint_type | VARCHAR | "ingredient_bound", "group_bound", "nutrient", "ratio", "fixed", "custom_linear" |
+| name | VARCHAR | e.g. "max_total_fat", "sid_met_lys_ratio" |
+| sense | VARCHAR | ">=", "<=", "=" |
+| rhs_value | DOUBLE | right-hand-side value after unit normalization |
+| unit_id | VARCHAR | FK → units |
+| basis | VARCHAR | "as_fed", "dry_matter", "energy_density", etc. |
+| hard | BOOLEAN | TRUE = required; FALSE = soft/penalized |
+| penalty | DOUBLE | optional soft-constraint penalty |
+| active | BOOLEAN | |
+
+#### `constraint_terms`
+Linear terms for each constraint. This is the escape hatch that makes the package flexible enough for
+real nutrition work.
+
+| column | type | notes |
+|---|---|---|
+| constraint_id | VARCHAR | FK → constraints |
+| term_type | VARCHAR | "ingredient", "ingredient_tag", "nutrient", "constant" |
+| term_id | VARCHAR | ingredient_id, tag, nutrient_id, or NULL for constant |
+| coefficient | DOUBLE | multiplier in the LP row |
+| unit_id | VARCHAR | FK → units where needed |
+
+Examples this model must support:
+- Ingredient bounds: corn ≤ 65%, soybean meal ≤ 30%
+- Fixed inclusions: premix = 0.25%, phytase = 0.01%
+- Group limits: total added fat ≤ 5%, animal protein ≤ 3%, DDGS ingredients ≤ 20%
+- Nutrient constraints: SID Lys ≥ 0.95%, STTD-P ≥ 0.33%, Ca ≤ 0.90%
+- Nutrient ratios: SID Met:Lys ≥ 30%, SID Thr:Lys ≥ 62%, Ca:STTD-P between 1.8 and 2.2
+- Energy-density constraints: SID Lys per Mcal NE, not only percent of complete feed
+- Custom linear constraints entered by advanced users
+
+MILP-only logic, such as "use X or Y but not both," should be represented later with binary variables
+and constraint metadata, but it is Phase 2. The deterministic MVP should fully support LP-compatible
+linear constraints.
+
 #### `prices`
 Current and historical ingredient prices. Prices are separate from ingredients because they change
 constantly, may come from multiple locations/sources, and often require user aggregation before use.
@@ -603,6 +661,173 @@ Different feedr functions accept different table inputs:
 
 ---
 
+## Formulation API Contract
+
+The deterministic swine formulation workflow must work before stochastic, growth, or profit
+optimization. The core API should match how nutritionists actually formulate diets: define animals,
+define requirements, select ingredients, assign prices, add constraints, solve, then inspect why the
+answer is feasible or infeasible.
+
+### Animal profile
+
+`animal_profile()` captures the biological context used by requirement systems and defaults. Users
+must be able to enter exact ages/weights and production assumptions.
+
+```r
+pig <- animal_profile(
+  species = "swine",
+  production_class = "grower",
+  start_bw_kg = 25,
+  end_bw_kg = 50,
+  mean_bw_kg = 37.5,
+  age_days = 75,
+  sex = "barrow",
+  adg_g_day = 850,
+  adfi_kg_day = 1.9,
+  lean_growth_g_day = 340
+)
+```
+
+Rules:
+- `animal_profile()` should validate required fields by species/production class
+- Requirement functions can derive missing values only when the equation supports it
+- If ADFI, ADG, or BW are assumed rather than user-entered, print that assumption in the spec/result
+
+### Requirement specs
+
+Users need both equation-derived requirements and manual nutritionist-entered specs.
+
+```r
+# Equation-derived
+spec <- nasem_swine(pig, system = "NASEM2022")
+
+# Manual spec entered by a nutritionist
+spec <- diet_spec(
+  species = "swine",
+  production_class = "grower",
+  basis = "as_fed",
+  requirements = tribble(
+    ~nutrient_id, ~min, ~max, ~unit,
+    "ne_swine",  2450, NA,   "kcal_kg_as_fed",
+    "sid_lys",   0.95, NA,   "pct_as_fed",
+    "sttd_p",    0.33, NA,   "pct_as_fed",
+    "ca",        0.58, 0.90, "pct_as_fed",
+    "na",        0.18, 0.25, "pct_as_fed"
+  )
+)
+```
+
+Rules:
+- `diet_spec()` should accept any nutrient present in `nutrients`
+- Specs should preserve original user units and store normalized solver units
+- Print methods should show both user-facing values and solver-normalized values
+- Missing required nutrients should fail before solving, not inside the solver
+
+### Price scenarios
+
+Users must be able to enter prices manually, import daily prices, aggregate historical prices, or use
+internal projections. The formulation should use a named scenario.
+
+```r
+prices <- price_scenario(
+  feedr,
+  scenario_id = "today_manual",
+  unit = "usd_short_ton_as_fed",
+  prices = tribble(
+    ~ingredient_id,             ~price,
+    "corn_yellow_dent_2",       205,
+    "soymeal_48",               410,
+    "choice_white_grease",      760,
+    "monocalcium_phosphate",    980,
+    "limestone",                95,
+    "salt",                     140
+  )
+)
+```
+
+Rules:
+- `price_scenario()` should require one resolved price per selected ingredient
+- Aggregation helpers can create scenarios from `prices`, e.g. mean 30-day, weighted projection, or user forecast
+- Solver internals use USD/kg; reports can show USD/short ton, USD/metric tonne, and cost/head if intake is known
+
+### Constraint builder
+
+`constrain()` can remain ergonomic, but there must also be explicit functions for arbitrary linear
+constraints.
+
+```r
+limits <- constraint_set("grower_practical_limits") |>
+  add_ingredient_bound("corn_yellow_dent_2", max = 0.65, unit = "fraction_as_fed") |>
+  add_ingredient_bound("soymeal_48", max = 0.30, unit = "fraction_as_fed") |>
+  add_fixed_inclusion("vitamin_trace_mineral_premix", value = 0.0025, unit = "fraction_as_fed") |>
+  add_group_bound(tag = "added_fat", max = 0.05, unit = "fraction_as_fed") |>
+  add_ratio_constraint(numerator = "sid_met", denominator = "sid_lys", min = 0.30) |>
+  add_ratio_constraint(numerator = "sid_thr", denominator = "sid_lys", min = 0.62) |>
+  add_custom_constraint(
+    name = "total_high_fiber_ingredients",
+    terms = c("ddgs" = 1, "wheat_midds" = 1),
+    max = 0.25,
+    unit = "fraction_as_fed"
+  )
+```
+
+Rules:
+- The explicit constraint API should compile to `constraints` + `constraint_terms`
+- Ratio constraints must be converted to linear form before solving, e.g. `sid_met - 0.30 * sid_lys >= 0`
+- Group/tag constraints should expand to ingredient terms at problem-build time
+- Bounds, fixed inclusions, and custom linear constraints should all appear in result diagnostics
+
+### End-to-end deterministic workflow
+
+```r
+feedr <- init_feedr_db("~/feedr/swine.db")
+
+pig <- animal_profile(
+  species = "swine",
+  production_class = "grower",
+  mean_bw_kg = 37.5,
+  adg_g_day = 850,
+  adfi_kg_day = 1.9,
+  sex = "barrow"
+)
+
+spec <- diet_spec(
+  species = "swine",
+  production_class = "grower",
+  basis = "as_fed",
+  requirements = grower_requirements_table
+)
+
+ingredient_set <- feedr |>
+  ingredients_resolved(species = "swine", reference_system = "user_preferred") |>
+  filter_tag(c("corn_soy_base", "minerals", "premix"))
+
+problem <- formulate_diet(
+  ingredients = ingredient_set,
+  animal = pig,
+  spec = spec,
+  prices = "today_manual",
+  constraints = limits
+)
+
+result <- solve_diet(problem)
+explain_solution(result)
+```
+
+### Result inspection
+
+Nutritionists need usable result inspection, not just a solver status.
+
+Required functions:
+- `as_tibble(result, "ingredients")` — inclusion, price used, cost contribution
+- `as_tibble(result, "nutrients")` — achieved nutrients vs min/max/target
+- `binding_constraints(result)` — constraints active at optimum
+- `shadow_prices(result)` — marginal values when available from solver
+- `explain_solution(result)` — concise summary of cost, feasibility, binding constraints, warnings
+- `explain_infeasibility(problem)` — best available explanation when no feasible solution exists
+
+---
+
 ## Warnings, Messages, and Errors
 
 This package must be unusually explicit because unit, basis, source, and price mistakes can produce
@@ -623,6 +848,10 @@ plausible-looking but wrong diet formulations.
 - Price scenario missing one or more selected ingredients
 - Nutrient specs using units incompatible with the nutrient definition
 - Ingredient limits outside 0–100% or inconsistent min/max bounds
+- Constraint terms that reference unknown ingredients, tags, nutrients, or units
+- Ratio constraints with missing numerator/denominator nutrients or denominator values that can be zero
+- Animal profiles missing fields required by the selected requirement equation
+- Manual requirements that specify neither `min`, `max`, nor `target`
 - Infeasible LP problems, with the nearest explanation available: impossible bounds, missing nutrients, or conflicting constraints
 - Stale price data when `price_date` is older than a user-defined threshold
 - User lab imports that overwrite or supersede existing active values
@@ -646,6 +875,13 @@ set_price_scenario(problem, "today_spot")
 #> Warning:
 #> Price scenario `today_spot` has no price for `monocalcium_phosphate`.
 #> Formulation will not run until every selected ingredient has a resolved price.
+```
+
+```r
+add_ratio_constraint(limits, numerator = "sid_met", denominator = "sid_lys", min = 0.30)
+#> Error:
+#> Cannot add ratio constraint because nutrient `sid_met` is not present in the selected
+#> ingredient set. Add `sid_met` values, select a different nutrient, or remove this constraint.
 ```
 
 ---
@@ -934,6 +1170,9 @@ feedr/
 | 5 | Price APIs? | **Import observations; formulate from named price scenarios.** USDA-AMS for grains where available. Futures via quantmod/Yahoo as best-effort forward price anchors. Protein meals may require user prices or licensed/paid sources. Do not bury prices in ingredients. |
 | 6 | Units? | **First-class schema concept.** Every nutrient, spec, price, and inclusion value has a unit and solver-normalized unit conversion. No silent guessing. |
 | 7 | Seed reference data? | **Only legally redistributable data.** If NRC/NASEM values cannot be redistributed, ship synthetic examples and user import helpers instead. |
+| 8 | Constraint flexibility? | **Generic linear constraints from day 1.** Per-ingredient min/max is not enough. Support ingredient bounds, fixed inclusions, group limits, nutrient constraints, nutrient ratios, and custom linear constraints in the deterministic MVP. |
+| 9 | Requirement input? | **Both equation-derived and manual.** `nasem_swine()` is useful, but `diet_spec()` must allow nutritionists to enter arbitrary requirements directly. |
+| 10 | Animal context? | **Use explicit `animal_profile()`.** Capture species, production class, age/weight, intake, gain, sex, and assumptions used to generate or interpret requirements. |
 
 ## Open Questions (still to decide)
 
@@ -958,6 +1197,8 @@ feedr/
 
 9. **`plot()` as terminal verb or return data?** Lean toward returning data (tibbles, lists) so users can pipe into their own ggplot2 — more composable. Ship `autoplot()` methods as convenience wrappers.
 10. **Interactive ingredient browser:** A `feedr_gadget()` Shiny widget for exploring the DB and building ingredient sets. Mark as Phase 2 — but design resolved accessor outputs so selections can return to console for scripting.
+11. **Constraint UI ergonomics:** How much shorthand should `constrain()` support before users should switch to explicit `add_*_constraint()` helpers?
+12. **Infeasibility explanation depth:** Decide how much automatic diagnosis is feasible in MVP versus reporting solver status plus structured pre-solve validation.
 
 ---
 
@@ -978,16 +1219,19 @@ feedr/
 
 ## Immediate Next Steps (if we proceed)
 
-1. Lock the normalized DuckDB schema: ingredients, nutrients, units, nutrient values, prices, price scenarios, ingredient limits
+1. Lock the normalized DuckDB schema: ingredients, nutrients, units, nutrient values, prices, price scenarios, ingredient limits, generic constraints
 2. Implement `init_feedr_db()` returning `feedr_session`, with explicit path, seed, migrate, and message behavior
-3. Seed a legal minimal example database (corn, SBM 48%, choice white grease, monocalcium phosphate, limestone, NaCl — enough to run a real nursery diet)
-4. Implement deterministic `formulate_diet()` with ROI + HiGHS backend and strict unit normalization
-5. Add structured warnings/errors for missing nutrients, missing prices, infeasible constraints, and unit/basis conflicts
-6. Test against a known MIXIT/BestMix/manual LP result to validate LP math
-7. Add NASEM swine requirement equations only after licensing/implementation details are clear
-8. Add price import and named price scenarios before stochastic formulation
-9. Defer stochastic formulation until deterministic swine formulation is validated
-10. Write vignette showing the full explicit-session workflow
+3. Implement `animal_profile()`, `diet_spec()`, `price_scenario()`, and `constraint_set()` builders before solver work
+4. Seed a legal minimal example database (corn, SBM 48%, choice white grease, monocalcium phosphate, limestone, NaCl — enough to run a real nursery diet)
+5. Implement deterministic `formulate_diet()` with ROI + HiGHS backend and strict unit normalization
+6. Implement constraint compilation: ingredient bounds, fixed inclusions, group limits, nutrient constraints, nutrient ratios, and custom linear constraints
+7. Add structured warnings/errors for missing nutrients, missing prices, infeasible constraints, bad ratio constraints, and unit/basis conflicts
+8. Add `explain_solution()` and a basic `explain_infeasibility()` based on pre-solve validation plus solver status
+9. Test against a known MIXIT/BestMix/manual LP result to validate LP math
+10. Add NASEM swine requirement equations only after licensing/implementation details are clear
+11. Add price import helpers after manual/named price scenarios work
+12. Defer stochastic formulation until deterministic swine formulation is validated
+13. Write vignette showing the full explicit-session workflow
 
 ---
 

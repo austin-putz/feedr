@@ -16,7 +16,7 @@ and stochastic formulation capabilities that commercial tools lack or hide behin
 ┌─────────────────────────────────────────────────┐
 │                  User API layer                  │  formulate_diet(), evaluate_diet(), etc.
 ├─────────────────────────────────────────────────┤
-│              Specification layer                 │  requirements(), nutrient_spec()
+│              Specification layer                 │  calculate_requirements(), diet_spec()
 ├───────────────────────┬─────────────────────────┤
 │    Solver layer       │   Stochastic engine      │  ROI + HiGHS / lpSolve / Rsymphony
 ├───────────────────────┴─────────────────────────┤
@@ -449,21 +449,45 @@ Ingredient prices selected for a scenario.
 | price_id | VARCHAR | FK → prices |
 | resolved_price_usd_kg | DOUBLE | normalized solver price snapshot |
 
-#### `nutrient_specs`
-Named requirement sets (diet specifications).
+#### `requirements`
+Stored requirement values. These rows already contain numeric min/max/target values and can pipe
+directly into `diet_spec()` after filtering.
 
 | column | type | notes |
 |---|---|---|
-| spec_id | VARCHAR PK | e.g. "nursery_phase2" |
+| requirement_set_id | VARCHAR | e.g. "nursery_phase2" |
 | species | VARCHAR | "swine", "poultry", "dairy", "beef" |
 | production_class | VARCHAR | "nursery", "grower", "finisher", "sow" |
+| phase | VARCHAR | optional |
 | nutrient_id | VARCHAR | FK → nutrients |
 | min_value | DOUBLE | constraint lower bound (NULL = none) |
 | max_value | DOUBLE | constraint upper bound (NULL = none) |
 | target_value | DOUBLE | for soft constraint / penalty approaches |
 | unit_id | VARCHAR | FK → units |
 | basis | VARCHAR | "as_fed" or "dry_matter" |
-| source_id | VARCHAR | requirement source or user spec |
+| source | VARCHAR | e.g. "NRC2012", "NASEM2022", "user_defined" |
+| source_id | VARCHAR | specific source record, import batch, or user spec |
+
+#### `requirement_equations`
+Stored requirement equations and coefficients. These rows are filtered by source/species/class, then
+passed to `calculate_requirements()` with an `animal_profile()`. The result is a plain requirement
+value table with the same shape as `requirements`.
+
+| column | type | notes |
+|---|---|---|
+| equation_id | VARCHAR PK | stable equation identifier |
+| source | VARCHAR | e.g. "NRC2012", "NASEM2022", "user_defined" |
+| species | VARCHAR | "swine", "poultry", "dairy", "beef" |
+| production_class | VARCHAR | "nursery", "grower", "finisher", "sow" |
+| phase | VARCHAR | optional |
+| nutrient_id | VARCHAR | FK → nutrients |
+| bound_type | VARCHAR | "min", "max", or "target" |
+| expression | VARCHAR | restricted expression or formula identifier |
+| unit_id | VARCHAR | FK → units |
+| basis | VARCHAR | "as_fed" or "dry_matter" |
+| required_inputs | VARCHAR | comma-separated or JSON list of animal/profile variables |
+| assumption_policy | VARCHAR | how missing inputs may be derived, if allowed |
+| citation_id | VARCHAR | source citation/provenance |
 
 #### `formulations`
 Saved diet outputs.
@@ -471,7 +495,7 @@ Saved diet outputs.
 | column | type | notes |
 |---|---|---|
 | formulation_id | VARCHAR PK | UUID |
-| spec_id | VARCHAR | FK → nutrient_specs |
+| spec_id | VARCHAR | final `feedr_diet_spec` identifier or requirement-set provenance |
 | feedr_session_path | VARCHAR | DB path for provenance |
 | ingredient_set_hash | VARCHAR | resolved ingredient/nutrient snapshot |
 | price_scenario_id | VARCHAR | FK → price_scenarios |
@@ -650,6 +674,44 @@ Different feedr functions accept different table inputs:
 - `simulate_growth()` — can accept either ingredient table or a pre-solved `feedr_result`
 - `compare_diets()` — expects a named list of ingredient tables or `feedr_result` objects
 
+### Naming conventions
+
+feedr uses operation-based function names and table-based source selection. Function names should
+describe what they do, not which reference system, species, or data source they use.
+
+Rules:
+- Use plural nouns for database tables: `ingredients`, `nutrients`, `nutrient_values`,
+  `requirements`, `requirement_equations`, `prices`, `price_scenarios`,
+  `price_scenario_items`, `constraints`, `constraint_terms`
+- Use singular nouns for object constructors: `animal_profile()`, `diet_spec()`,
+  `price_scenario()`, `constraint_set()`
+- Use verbs for transformations and actions: `get_table()`, `calculate_requirements()`,
+  `validate_problem()`, `formulate_diet()`, `solve_diet()`, `explain_solution()`
+- Source names belong in data columns and `filter()` calls, not in function names
+- Species names belong in data columns and `filter()` calls, not in function names
+- Do not create source/species-specific functions such as `nasem_swine()`, `nrc_swine()`,
+  `nasem_dairy()`, or `diet_spec_nasem()`
+
+Why this matters: source/species-specific functions encode two separate axes of variability into the
+API. A function like `nasem_swine()` is limited by both source (`NASEM`) and species (`swine`), which
+does not scale to NRC, INRA, CVB, FEDNA, poultry, dairy, beef, user equations, or company-specific
+systems. feedr should prefer table filtering to select the correct rows, then use one general verb to
+perform the operation.
+
+```r
+# Preferred: source and species are selected in data
+feedr |>
+  get_table("requirement_equations") |>
+  filter(source == "NASEM2022", species == "swine", production_class == "nursery") |>
+  calculate_requirements(animal = pig) |>
+  diet_spec(basis = "as_fed")
+
+# Avoid: source and species are baked into function names
+nasem_swine(pig)
+nrc_swine(pig)
+diet_spec_nasem(pig)
+```
+
 ### Pipe-friendly design principles
 
 - Every function returns the same class (e.g., `feedr_problem` or `feedr_result`) so the pipe flows
@@ -690,35 +752,76 @@ pig <- animal_profile(
 
 Rules:
 - `animal_profile()` should validate required fields by species/production class
-- Requirement functions can derive missing values only when the equation supports it
+- `calculate_requirements()` can derive missing values only when the selected equation supports it
 - If ADFI, ADG, or BW are assumed rather than user-entered, print that assumption in the spec/result
 
 ### Requirement specs
 
-Users need both equation-derived requirements and manual nutritionist-entered specs.
+Users need manual nutritionist-entered specs, imported specs, database-stored requirement values, and
+equation-derived requirements. The final constructor is always `diet_spec()`. It accepts a
+requirement-value table, validates it, preserves original units, normalizes solver units, and returns
+a `feedr_diet_spec`.
+
+Equation-derived requirements use one intermediate transformer: `calculate_requirements()`. It
+accepts a filtered equation table plus an `animal_profile()`, evaluates the equations, and returns the
+same requirement-value table shape that a user could have typed manually with `tribble()` or imported
+from CSV/Excel. `diet_spec()` should not care how the requirement values were produced.
 
 ```r
-# Equation-derived
-spec <- nasem_swine(pig, system = "NASEM2022")
-
 # Manual spec entered by a nutritionist
-spec <- diet_spec(
-  species = "swine",
-  production_class = "grower",
-  basis = "as_fed",
-  requirements = tribble(
-    ~nutrient_id, ~min, ~max, ~unit,
-    "ne_swine",  2450, NA,   "kcal_kg_as_fed",
-    "sid_lys",   0.95, NA,   "pct_as_fed",
-    "sttd_p",    0.33, NA,   "pct_as_fed",
-    "ca",        0.58, 0.90, "pct_as_fed",
-    "na",        0.18, 0.25, "pct_as_fed"
+spec <- tribble(
+  ~nutrient_id, ~min, ~max, ~unit,
+  "ne_swine",  2450, NA,   "kcal_kg_as_fed",
+  "sid_lys",   0.95, NA,   "pct_as_fed",
+  "sttd_p",    0.33, NA,   "pct_as_fed",
+  "ca",        0.58, 0.90, "pct_as_fed",
+  "na",        0.18, 0.25, "pct_as_fed"
+) |>
+  diet_spec(
+    species = "swine",
+    production_class = "grower",
+    basis = "as_fed",
+    source = "user_defined"
   )
+
+# Stored requirement values
+spec <- feedr |>
+  get_table("requirements") |>
+  filter(source == "NRC2012", species == "swine", production_class == "grower") |>
+  diet_spec(basis = "as_fed")
+
+# Stored equations evaluated into the same requirement-value table shape
+spec <- feedr |>
+  get_table("requirement_equations") |>
+  filter(source == "NASEM2022", species == "swine", production_class == "grower") |>
+  calculate_requirements(animal = pig) |>
+  diet_spec(basis = "as_fed")
+```
+
+All valid paths converge to the same shape:
+
+```r
+# manual table, imported file, database values, or calculated equations
+requirements <- tribble(
+  ~nutrient_id, ~min, ~max, ~unit,
+  "ne_swine",  2450, NA,   "kcal_kg_as_fed",
+  "sid_lys",   0.95, NA,   "pct_as_fed"
 )
+
+spec <- requirements |>
+  diet_spec(
+    species = "swine",
+    production_class = "grower",
+    basis = "as_fed",
+    source = "user_defined"
+  )
 ```
 
 Rules:
 - `diet_spec()` should accept any nutrient present in `nutrients`
+- `diet_spec()` accepts requirement values, not raw equations
+- `calculate_requirements()` returns a plain requirement-value tibble, not a final spec object
+- Source-specific and species-specific function names are not allowed for requirement systems
 - Specs should preserve original user units and store normalized solver units
 - Print methods should show both user-facing values and solver-normalized values
 - Missing required nutrients should fail before solving, not inside the solver
@@ -982,9 +1085,14 @@ plan(multisession, workers = 8)
 
 ## Requirement Systems
 
-### `nasem_swine()` integration
+### Table-first requirement systems
 
-NASEM 2022 (formerly NRC) provides requirement equations for swine. These are functions of:
+Reference systems such as NRC, NASEM, INRA, CVB, FEDNA, user equations, and company-specific systems
+must be represented as data, not as source/species-specific function names. Requirement systems may
+provide stored requirement values or stored equations. Stored values pipe directly into `diet_spec()`.
+Stored equations pipe through `calculate_requirements()` first.
+
+Requirement equations can depend on:
 - Body weight (BW)
 - Average daily gain (ADG) target  
 - Feed intake (ADFI) — often itself a function of BW
@@ -992,25 +1100,29 @@ NASEM 2022 (formerly NRC) provides requirement equations for swine. These are fu
 - Genetic potential (lean growth rate)
 
 ```r
-nasem_swine(
-  bw_kg      = 50,
-  adg_g      = 900,
-  sex        = "barrow",
-  lean_growth = 340  # g/day
-) |>
-  formulate_diet(ingredients = corn_soy_set)
+pig <- animal_profile(
+  species = "swine",
+  production_class = "grower",
+  mean_bw_kg = 50,
+  adg_g_day = 900,
+  sex = "barrow",
+  lean_growth_g_day = 340
+)
+
+spec <- feedr |>
+  get_table("requirement_equations") |>
+  filter(source == "NASEM2022", species == "swine", production_class == "grower") |>
+  calculate_requirements(animal = pig) |>
+  diet_spec(basis = "as_fed")
 ```
 
-The function returns a `nutrient_spec` object that pipes into `formulate_diet()`.
+`calculate_requirements()` returns a plain tibble with the same columns expected by `diet_spec()`
+(`nutrient_id`, `min`, `max`, optional `target`, `unit`, plus provenance columns such as `source`,
+`equation_id`, `assumption_id`, and `basis` when available). This keeps every intermediate object
+inspectable and auditable before formulation.
 
-### Other species
-
-- `nasem_dairy()` — NASEM 2021 for lactating/dry/heifer
-- `nrc_beef()` — NRC 2016 beef cattle
-- `nrc_poultry()` — NRC 1994 (dated, but still widely used)
-
-**Question:** Start with swine only, or design the abstraction to handle multi-species from day 1?
-Starting multi-species immediately ensures the schema doesn't require painful refactors later.
+The first implementation can focus on swine, but the abstraction must be multi-species from day 1.
+Species and source are selected with `filter()`, not function names.
 
 ---
 
@@ -1030,14 +1142,15 @@ simulate_growth(
   sex          = "barrow",
   step_kg      = 5,           # recompute diet every 5 kg BW gain
   diet_fn      = formulate_diet,
-  spec_fn      = nasem_swine,
+  requirement_source = "NASEM2022",
   price_date   = Sys.Date()
 ) |>
   plot_growth_cost()
 ```
 
-This is essentially a loop over `nasem_swine()` + `formulate_diet()` at each BW step,
-tracking cumulative feed cost.
+This is essentially a loop that builds an `animal_profile()` at each step, filters
+`requirement_equations` for the selected source/species/class, runs `calculate_requirements()`, then
+uses `diet_spec()` + `formulate_diet()` to track cumulative feed cost.
 
 ---
 
@@ -1055,7 +1168,7 @@ enough to produce heavier pigs faster.
 optimize_profit(
   sale_price_per_kg = 1.85,      # $/kg live weight
   non_feed_cost_per_day = 0.40,  # $/head/day (barn overhead, labor)
-  growth_model = "nasem_swine",
+  requirement_source = "NASEM2022",
   ...
 )
 ```
@@ -1133,7 +1246,7 @@ feedr/
 │   ├── db.R                  # DuckDB connection, on-attach init, schema migrations
 │   ├── ingredients.R         # ingredients(), filter_ingredients(), update_ingredient()
 │   ├── prices.R              # fetch_cbot_prices(), fetch_usda_ams(), update_prices()
-│   ├── requirements.R        # nasem_swine(), nasem_dairy(), nutrient_spec()
+│   ├── requirements.R        # calculate_requirements(), diet_spec()
 │   ├── formulate.R           # formulate_diet(), solve_diet(), build_lp()
 │   ├── evaluate.R            # evaluate_diet() — check fixed diet against spec
 │   ├── stochastic.R          # formulate_stochastic(), scenario generation
@@ -1153,7 +1266,7 @@ feedr/
 ├── vignettes/
 │   ├── getting-started.Rmd
 │   ├── stochastic-formulation.Rmd
-│   └── nasem-requirements.Rmd
+│   └── requirement-systems.Rmd
 └── DESCRIPTION
 ```
 
@@ -1171,8 +1284,9 @@ feedr/
 | 6 | Units? | **First-class schema concept.** Every nutrient, spec, price, and inclusion value has a unit and solver-normalized unit conversion. No silent guessing. |
 | 7 | Seed reference data? | **Only legally redistributable data.** If NRC/NASEM values cannot be redistributed, ship synthetic examples and user import helpers instead. |
 | 8 | Constraint flexibility? | **Generic linear constraints from day 1.** Per-ingredient min/max is not enough. Support ingredient bounds, fixed inclusions, group limits, nutrient constraints, nutrient ratios, and custom linear constraints in the deterministic MVP. |
-| 9 | Requirement input? | **Both equation-derived and manual.** `nasem_swine()` is useful, but `diet_spec()` must allow nutritionists to enter arbitrary requirements directly. |
+| 9 | Requirement input? | **Table-first values and equations.** `diet_spec()` is the only final requirement-spec constructor. Manual tables, imported CSV/Excel tables, and database requirement rows pipe directly into `diet_spec()`. Equation rows first pipe through `calculate_requirements()`, which returns the same requirement-value table shape expected by `diet_spec()`. Source and species names live in table columns and `filter()` calls, not function names. |
 | 10 | Animal context? | **Use explicit `animal_profile()`.** Capture species, production class, age/weight, intake, gain, sex, and assumptions used to generate or interpret requirements. |
+| 11 | Naming convention? | **Operation-based function names, table-based source selection.** Do not create source/species-specific functions like `nasem_swine()` or `nrc_swine()`. They limit both source and species in the API and do not scale. |
 
 ## Open Questions (still to decide)
 
@@ -1221,14 +1335,14 @@ feedr/
 
 1. Lock the normalized DuckDB schema: ingredients, nutrients, units, nutrient values, prices, price scenarios, ingredient limits, generic constraints
 2. Implement `init_feedr_db()` returning `feedr_session`, with explicit path, seed, migrate, and message behavior
-3. Implement `animal_profile()`, `diet_spec()`, `price_scenario()`, and `constraint_set()` builders before solver work
+3. Implement `animal_profile()`, `calculate_requirements()`, `diet_spec()`, `price_scenario()`, and `constraint_set()` builders before solver work
 4. Seed a legal minimal example database (corn, SBM 48%, choice white grease, monocalcium phosphate, limestone, NaCl — enough to run a real nursery diet)
 5. Implement deterministic `formulate_diet()` with ROI + HiGHS backend and strict unit normalization
 6. Implement constraint compilation: ingredient bounds, fixed inclusions, group limits, nutrient constraints, nutrient ratios, and custom linear constraints
 7. Add structured warnings/errors for missing nutrients, missing prices, infeasible constraints, bad ratio constraints, and unit/basis conflicts
 8. Add `explain_solution()` and a basic `explain_infeasibility()` based on pre-solve validation plus solver status
 9. Test against a known MIXIT/BestMix/manual LP result to validate LP math
-10. Add NASEM swine requirement equations only after licensing/implementation details are clear
+10. Add NASEM/NRC requirement equation rows only after licensing/implementation details are clear
 11. Add price import helpers after manual/named price scenarios work
 12. Defer stochastic formulation until deterministic swine formulation is validated
 13. Write vignette showing the full explicit-session workflow

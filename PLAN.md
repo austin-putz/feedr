@@ -6,6 +6,20 @@ A competitive open-source alternative to MIXIT, AccuMix, Brill, Format, BestMix,
 Designed for R users — nutritionists, researchers, integrators — with a pipe-first API, DuckDB backend,
 and stochastic formulation capabilities that commercial tools lack or hide behind expensive licenses.
 
+## Project Operations Goal
+
+feedr should be developed as a GitHub-hosted open-source package with GitHub Actions as the default
+continuous integration system. The project should treat cross-platform compatibility as a core quality
+bar: code, tests, examples, and vignettes must work on macOS, Linux, and Windows unless a limitation is
+explicitly documented and justified.
+
+This means implementation should avoid assumptions that only hold on Apple devices or a single
+developer machine:
+- Use portable R APIs for paths, file permissions, temp directories, and process behavior
+- Avoid shell commands, filesystem paths, compiled dependencies, or system tools that only work on macOS
+- Test package checks on all major GitHub Actions OS runners before considering changes complete
+- Keep CI failures on any supported OS as release blockers, not optional cleanup
+
 ---
 
 ## Core Architecture
@@ -1287,6 +1301,7 @@ feedr/
 | 9 | Requirement input? | **Table-first values and equations.** `diet_spec()` is the only final requirement-spec constructor. Manual tables, imported CSV/Excel tables, and database requirement rows pipe directly into `diet_spec()`. Equation rows first pipe through `calculate_requirements()`, which returns the same requirement-value table shape expected by `diet_spec()`. Source and species names live in table columns and `filter()` calls, not function names. |
 | 10 | Animal context? | **Use explicit `animal_profile()`.** Capture species, production class, age/weight, intake, gain, sex, and assumptions used to generate or interpret requirements. |
 | 11 | Naming convention? | **Operation-based function names, table-based source selection.** Do not create source/species-specific functions like `nasem_swine()` or `nrc_swine()`. They limit both source and species in the API and do not scale. |
+| 12 | Hosting and CI? | **GitHub + GitHub Actions, tested on macOS, Linux, and Windows.** Cross-platform package checks are required so feedr does not accidentally depend on Apple-only paths, shell behavior, or system tooling. |
 
 ## Open Questions (still to decide)
 
@@ -1346,6 +1361,7 @@ feedr/
 11. Add price import helpers after manual/named price scenarios work
 12. Defer stochastic formulation until deterministic swine formulation is validated
 13. Write vignette showing the full explicit-session workflow
+14. Add GitHub Actions workflows for R package checks on macOS, Linux, and Windows
 
 ---
 

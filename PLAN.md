@@ -1,0 +1,994 @@
+# feedr: R Package for Livestock Diet Formulation
+
+## Vision
+
+A competitive open-source alternative to MIXIT, AccuMix, Brill, Format, BestMix, AMTS, Spartan, etc.
+Designed for R users — nutritionists, researchers, integrators — with a pipe-first API, DuckDB backend,
+and stochastic formulation capabilities that commercial tools lack or hide behind expensive licenses.
+
+---
+
+## Core Architecture
+
+### Layered design
+
+```
+┌─────────────────────────────────────────────────┐
+│                  User API layer                  │  formulate_diet(), evaluate_diet(), etc.
+├─────────────────────────────────────────────────┤
+│              Specification layer                 │  requirements(), nutrient_spec()
+├───────────────────────┬─────────────────────────┤
+│    Solver layer       │   Stochastic engine      │  ROI + HiGHS / lpSolve / Rsymphony
+├───────────────────────┴─────────────────────────┤
+│              Ingredient/price layer              │  filter_ingredients(), price feeds
+├─────────────────────────────────────────────────┤
+│                  DuckDB backend                  │  local persistent DB, Arrow interchange
+└─────────────────────────────────────────────────┘
+```
+
+### Explicit database initialization
+
+`library(feedr)` should not create, migrate, or seed a database as a side effect. Package attach should
+only load functions. Database creation is explicit through `init_feedr_db()` so users know exactly
+where persistent files are written and what seed data is installed.
+
+Recommended behavior:
+1. `init_feedr_db()` creates or opens a DuckDB file at a user-specified location
+2. It checks schema version and runs migrations after explicit confirmation or with `migrate = TRUE`
+3. It seeds package-provided open/licensed reference data only when requested or when the DB is empty
+4. It returns a `feedr_session` object containing the DB connection, path, schema version, and options
+5. It registers a finalizer for that session object so the connection closes cleanly
+
+This means nutritionists do:
+```r
+library(feedr)
+
+feedr <- init_feedr_db(
+  path = "~/my_feedr_data/feedr.db",
+  seed = TRUE,
+  migrate = TRUE
+)
+
+ingredients(feedr)     # view the resolved ingredient database
+```
+
+### Database path options
+
+Users can control the default DB location via R options, set in `.Rprofile` for persistence:
+
+```r
+# In ~/.Rprofile
+options(
+  feedr.db_path = "~/my_feedr_data",   # directory
+  feedr.db_name = "feedr.db"           # filename (default: "feedr.db")
+)
+```
+
+If `path` is omitted, `init_feedr_db()` resolves:
+`file.path(getOption("feedr.db_path", "~/.feedr"), getOption("feedr.db_name", "feedr.db"))`.
+
+```r
+# Uses the default path from options
+feedr <- init_feedr_db()
+
+# Project/client-specific DB
+smith_farms <- init_feedr_db("~/clients/smithfarms/feedr.db")
+```
+
+### Session model — avoid hidden global state
+
+The primary API should pass a `feedr_session` object explicitly. This avoids hidden global connection
+state, makes tests deterministic, and allows users to keep multiple project/client databases open in
+one R session.
+
+```r
+feedr <- init_feedr_db("~/feedr/swine.db")
+
+feedr |>
+  ingredients() |>
+  formulate_diet(spec = "grower_standard") |>
+  solve_diet()
+```
+
+Optional convenience helpers can exist for interactive use:
+- `feedr_default()` returns the current default session
+- `set_feedr_default(feedr)` sets a default session
+- `feedr_db(feedr = feedr_default())` returns the DuckDB connection for advanced users
+
+Core functions should accept `feedr_session` explicitly and should not require a package-global
+connection.
+
+### Persistence model — file-backed DB, explicit versioning, no save_db()
+
+DuckDB is file-backed. Every write commits to disk automatically — **there is no `save_db()`**.
+The moment a user calls `update_ingredient()`, the value is durably on disk. This is the same
+guarantee SQLite provides and what users should expect.
+
+Reference values, user lab values, and user overrides must be stored as separate records with explicit
+source metadata. Do not overload a single `source` string with precedence, provenance, project, and
+batch semantics.
+
+```
+nutrient_values
+┌──────────────────────┬────────────┬───────┬─────────────┬───────────────┬──────────────┬────────────┐
+│ ingredient_id        │ nutrient_id│ value │ source_type │ source_id     │ batch_id     │ effective  │
+│ corn_yellow_dent_2   │ me_swine   │ 3386  │ reference   │ NRC2012       │ seed_v1      │ 2012-01-01 │
+│ corn_yellow_dent_2   │ me_swine   │ 3310  │ user_lab    │ lab_oct2025   │ oct2025_lab  │ 2025-10-15 │
+│ corn_yellow_dent_2   │ sid_lys    │ 0.19  │ reference   │ NRC2012       │ seed_v1      │ 2012-01-01 │
+│ corn_yellow_dent_2   │ sid_lys    │ 0.21  │ user_lab    │ lab_oct2025   │ oct2025_lab  │ 2025-10-15 │
+└──────────────────────┴────────────┴───────┴─────────────┴───────────────┴──────────────┴────────────┘
+```
+
+A resolved view should apply explicit precedence at query time:
+- Project/client overrides win over global user lab values
+- User lab values win over reference values
+- Newer effective dates win within the same precedence level
+- The selected reference system is explicit, e.g. `reference_system = "NRC2012"` or `"NASEM2022"`
+
+```sql
+-- conceptual resolved nutrient values
+SELECT DISTINCT ON (ingredient_id, nutrient_id, project_id)
+  ingredient_id, nutrient_id, value, unit_id, source_type, source_id, batch_id, effective_date
+FROM nutrient_values
+WHERE archived_at IS NULL
+ORDER BY ingredient_id, nutrient_id, project_id,
+  CASE source_type
+    WHEN 'project_override' THEN 0
+    WHEN 'user_lab' THEN 1
+    WHEN 'reference' THEN 2
+    ELSE 9
+  END,
+  effective_date DESC,
+  created_at DESC
+```
+
+**All formulation functions query resolved nutrient values, never raw `nutrient_values` directly.**
+Users normally do not think about the layering; advanced users can inspect raw records for audit and
+provenance.
+
+Key rules:
+- Package updates only INSERT reference rows into explicitly versioned seed batches — user rows are never touched
+- `update_ingredient()` creates a new `project_override` or `user_lab` row instead of destructively editing history
+- `reset_to_defaults()` archives matching user/project rows for a given ingredient/nutrient (with confirmation prompt)
+- `reset_all_to_defaults()` archives the entire user/project layer (nuclear option, confirmation required)
+- Raw value tables and audit tables are always queryable for reproducibility
+
+```r
+# User updates corn ME — persists immediately, no save needed
+update_ingredient(feedr, "corn_yellow_dent_2", me_swine_kcal_kg = 3310, source_id = "lab_oct2025")
+
+# Batch import lab sheet — writes to user layer
+import_lab_results(feedr, "oct2025_proximate.csv", batch_id = "oct2025_lab")
+
+# See resolved values (what formulation will actually use)
+feedr |> ingredients_resolved() |> filter(ingredient_id == "corn_yellow_dent_2")
+
+# See all raw values for an ingredient — compare user vs. reference
+feedr |> nutrient_values() |> filter(ingredient_id == "corn_yellow_dent_2")
+
+# Undo a specific user override, revert to NRC value
+reset_to_defaults(feedr, "corn_yellow_dent_2", nutrient = "me_swine_kcal_kg")
+```
+
+### `load_db()` — switching database files
+
+While `save_db()` is unnecessary, opening different database files is useful for:
+
+1. **Project-specific databases** — a consulting nutritionist might maintain one DB per client farm
+2. **Sharing databases** — a colleague can send their `.db` file and you load it directly
+3. **Multiple species setups** — a swine-only DB and a poultry DB kept separate
+
+```r
+# Open multiple project-specific DBs explicitly
+personal <- init_feedr_db()
+smith_farms <- init_feedr_db("~/clients/smithfarms/feedr.db")
+
+# Set one as the interactive default if desired
+set_feedr_default(smith_farms)
+
+# Inspect the active/default connection
+feedr_db()  # prints connection info including file path
+```
+
+`load_db()` can be provided as an alias around `init_feedr_db()` for convenience, but it should return
+a `feedr_session` object instead of silently replacing a hidden global connection. Reference tables are
+seeded into the new DB only when requested or when `seed = TRUE`.
+
+---
+
+## Data Licensing and Seed Data
+
+Bundled seed data must be legally redistributable. Do not assume NRC/NASEM tables can be copied into
+the package. Before implementation, classify each data source as:
+- **Redistributable:** can ship in `inst/extdata` or package data
+- **User-provided:** user imports their licensed copy or lab sheet locally
+- **Derived equation:** implemented from a cited public equation if redistribution is permitted
+- **Metadata only:** package stores schema/source identifiers but not proprietary values
+
+If key NRC/NASEM values cannot be redistributed, the package should still work with:
+- A small synthetic/example dataset for tests and vignettes
+- User import helpers for licensed spreadsheets or lab exports
+- Clear messages explaining that users must provide their own licensed reference data
+
+This is a blocking issue for any claim that the package ships NRC/NASEM reference ingredient values.
+
+---
+
+## Data Layer — DuckDB Schema
+
+### Tables
+
+#### `ingredients`
+Ingredient identity and metadata only. No nutrient values and no prices live here.
+
+| column | type | notes |
+|---|---|---|
+| ingredient_id | VARCHAR PK | slug, e.g. "corn_yellow_dent_2" |
+| name | VARCHAR | "Yellow Dent #2 Corn" |
+| ingredient_class | VARCHAR | "grain", "protein_meal", "fat", "mineral", etc. |
+| default_species | VARCHAR | optional convenience tag, not a constraint |
+| description | VARCHAR | optional |
+| active | BOOLEAN | hide retired ingredients without deleting history |
+| created_at | TIMESTAMP | |
+| updated_at | TIMESTAMP | |
+
+#### `ingredient_tags`
+Many-to-many tags for filtering ingredient sets.
+
+| column | type | notes |
+|---|---|---|
+| ingredient_id | VARCHAR | FK → ingredients |
+| tag | VARCHAR | e.g. "corn_soy_base", "ddgs", "nursery_safe" |
+
+#### `nutrients`
+Canonical nutrient definitions. This table is critical for units, species specificity, LP conversion,
+and validation.
+
+| column | type | notes |
+|---|---|---|
+| nutrient_id | VARCHAR PK | e.g. "dm", "cp", "me_swine", "ne_swine", "sid_lys", "sttd_p" |
+| display_name | VARCHAR | user-facing name |
+| nutrient_class | VARCHAR | "proximate", "energy", "amino_acid", "mineral", etc. |
+| species | VARCHAR | NULL for universal, otherwise "swine", "poultry", "dairy", "beef" |
+| basis | VARCHAR | "as_fed", "dry_matter", "either" |
+| default_unit_id | VARCHAR | FK → units |
+| lp_unit_id | VARCHAR | canonical unit used inside LP matrix |
+| lower_is_better | BOOLEAN | useful for nutrients constrained by maximum |
+| description | VARCHAR | |
+
+Energy systems are stored as different nutrients, not overloaded columns. Examples:
+- `me_swine_kcal_kg`
+- `ne_swine_kcal_kg`
+- `me_poultry_kcal_kg`
+- `nel_dairy_mcal_kg`
+
+This keeps the schema multi-species from day 1 while allowing swine-only implementation first.
+
+#### `units`
+Canonical unit registry and conversion metadata.
+
+| column | type | notes |
+|---|---|---|
+| unit_id | VARCHAR PK | "pct_as_fed", "pct_dm", "kcal_kg_as_fed", "mcal_kg_dm", "usd_short_ton" |
+| measure | VARCHAR | "composition", "energy", "price", "mass", "inclusion" |
+| numerator | VARCHAR | optional structured metadata |
+| denominator | VARCHAR | optional structured metadata |
+| system | VARCHAR | "metric", "us", "mixed" |
+| description | VARCHAR | |
+
+Unit conversion must be explicit and tested. The LP builder should normalize:
+- Inclusion variables to kg per 1000 kg complete feed
+- Nutrient concentrations to the nutrient's `lp_unit_id`
+- Prices to USD per kg feed ingredient, then report USD per short ton and/or metric tonne
+- Basis to as-fed for formulation unless the user explicitly requests dry-matter formulation
+
+#### `nutrient_values`
+Long-format nutrient composition table. One row per ingredient × nutrient × source record.
+
+| column | type | notes |
+|---|---|---|
+| value_id | VARCHAR PK | UUID |
+| ingredient_id | VARCHAR | FK → ingredients |
+| nutrient_id | VARCHAR | FK → nutrients |
+| value | DOUBLE | numeric value in `unit_id` |
+| unit_id | VARCHAR | FK → units |
+| source_type | VARCHAR | "reference", "user_lab", "project_override", "calculated" |
+| source_id | VARCHAR | "NRC2012", "NASEM2022", "lab_oct2025", etc. |
+| batch_id | VARCHAR | import or seed batch identifier |
+| project_id | VARCHAR | optional project/client scope |
+| effective_date | DATE | date value becomes active |
+| archived_at | TIMESTAMP | NULL means active |
+| created_at | TIMESTAMP | |
+| updated_at | TIMESTAMP | |
+
+Uniqueness should be enforced over the active value grain that makes sense for the source, e.g.
+`ingredient_id × nutrient_id × source_type × source_id × batch_id × project_id × effective_date`.
+Do not use `ingredient_id` alone as a primary key.
+
+#### `nutrient_variability`
+Optional stochastic metadata for nutrient draws.
+
+| column | type | notes |
+|---|---|---|
+| variability_id | VARCHAR PK | UUID |
+| ingredient_id | VARCHAR | FK → ingredients |
+| nutrient_id | VARCHAR | FK → nutrients |
+| distribution | VARCHAR | "normal", "lognormal", "triangular", "empirical", "fixed" |
+| mean_value | DOUBLE | optional if tied to resolved nutrient value |
+| sd_value | DOUBLE | |
+| cv | DOUBLE | |
+| min_value | DOUBLE | |
+| max_value | DOUBLE | |
+| source_id | VARCHAR | literature/user source |
+| unit_id | VARCHAR | FK → units |
+
+Default stochastic behavior should be zero variance unless variability is explicitly supplied or
+shipped from a source that can be legally redistributed.
+
+#### `ingredient_limits`
+Default and user-defined inclusion bounds. This is a first-class input to formulation, not an ad-hoc
+argument parser.
+
+| column | type | notes |
+|---|---|---|
+| limit_id | VARCHAR PK | UUID |
+| ingredient_id | VARCHAR | FK → ingredients |
+| species | VARCHAR | "swine", "poultry", etc. |
+| production_class | VARCHAR | "nursery", "grower", "finisher", "sow", etc. |
+| min_inclusion | DOUBLE | canonical LP unit, fraction or kg/1000 kg |
+| max_inclusion | DOUBLE | canonical LP unit, fraction or kg/1000 kg |
+| unit_id | VARCHAR | FK → units |
+| source_type | VARCHAR | "reference", "user", "project_override" |
+| source_id | VARCHAR | provenance |
+| project_id | VARCHAR | optional project/client scope |
+| effective_date | DATE | |
+| archived_at | TIMESTAMP | |
+
+The formulation API can still expose convenient syntax like `constrain(corn_max = 0.65)`, but it
+should resolve to structured limit records internally.
+
+#### `prices`
+Current and historical ingredient prices. Prices are separate from ingredients because they change
+constantly, may come from multiple locations/sources, and often require user aggregation before use.
+
+| column | type | notes |
+|---|---|---|
+| price_id | VARCHAR PK | UUID |
+| ingredient_id | VARCHAR | FK → ingredients |
+| price_date | DATE | |
+| price_value | DOUBLE | numeric value in `unit_id` |
+| unit_id | VARCHAR | FK → units, e.g. "usd_short_ton_as_fed" |
+| source_type | VARCHAR | "futures", "ams_weekly", "user", "internal_projection" |
+| source_id | VARCHAR | "cbot", "usda_ams", "smith_farms_projection" |
+| contract_month | VARCHAR | "2025-12" for futures |
+| location | VARCHAR | "Chicago", "Omaha", etc. |
+| basis_value | DOUBLE | optional local basis in `basis_unit_id` |
+| basis_unit_id | VARCHAR | FK → units |
+| aggregation_method | VARCHAR | "spot", "mean_30d", "weighted_projection", etc. |
+| created_at | TIMESTAMP | |
+
+Users should be able to store raw daily prices, rolling means, futures-derived projections, and
+internal procurement assumptions side-by-side. Formulation uses a selected/resolved price scenario,
+not whatever price happened to be inserted most recently.
+
+#### `price_scenarios`
+Named price selections used for reproducible formulation.
+
+| column | type | notes |
+|---|---|---|
+| price_scenario_id | VARCHAR PK | e.g. "today_spot", "q4_projection", "smith_june_budget" |
+| description | VARCHAR | |
+| created_at | TIMESTAMP | |
+| created_by | VARCHAR | optional |
+
+#### `price_scenario_items`
+Ingredient prices selected for a scenario.
+
+| column | type | notes |
+|---|---|---|
+| price_scenario_id | VARCHAR | FK → price_scenarios |
+| ingredient_id | VARCHAR | FK → ingredients |
+| price_id | VARCHAR | FK → prices |
+| resolved_price_usd_kg | DOUBLE | normalized solver price snapshot |
+
+#### `nutrient_specs`
+Named requirement sets (diet specifications).
+
+| column | type | notes |
+|---|---|---|
+| spec_id | VARCHAR PK | e.g. "nursery_phase2" |
+| species | VARCHAR | "swine", "poultry", "dairy", "beef" |
+| production_class | VARCHAR | "nursery", "grower", "finisher", "sow" |
+| nutrient_id | VARCHAR | FK → nutrients |
+| min_value | DOUBLE | constraint lower bound (NULL = none) |
+| max_value | DOUBLE | constraint upper bound (NULL = none) |
+| target_value | DOUBLE | for soft constraint / penalty approaches |
+| unit_id | VARCHAR | FK → units |
+| basis | VARCHAR | "as_fed" or "dry_matter" |
+| source_id | VARCHAR | requirement source or user spec |
+
+#### `formulations`
+Saved diet outputs.
+
+| column | type | notes |
+|---|---|---|
+| formulation_id | VARCHAR PK | UUID |
+| spec_id | VARCHAR | FK → nutrient_specs |
+| feedr_session_path | VARCHAR | DB path for provenance |
+| ingredient_set_hash | VARCHAR | resolved ingredient/nutrient snapshot |
+| price_scenario_id | VARCHAR | FK → price_scenarios |
+| created_at | TIMESTAMP | |
+| cost_usd_ton | DOUBLE | |
+| solver_status | VARCHAR | "optimal", "infeasible", etc. |
+| scenario_hash | VARCHAR | for stochastic batch linking |
+
+#### `formulation_ingredients`
+Ingredients and inclusion rates for each formulation.
+
+| column | type | notes |
+|---|---|---|
+| formulation_id | VARCHAR | FK → formulations |
+| ingredient_id | VARCHAR | FK → ingredients |
+| inclusion_pct | DOUBLE | % of diet as-fed |
+| inclusion_kg_per_1000kg | DOUBLE | canonical solver inclusion |
+| price_used_usd_kg | DOUBLE | normalized price snapshot |
+| cost_usd_ton | DOUBLE | reported cost contribution |
+
+---
+
+## Price Data APIs
+
+### CBOT / CME Futures
+
+- Corn (ZC), Soybean Meal (ZM), Soybean Oil (ZL), Wheat (ZW), Oats (ZO)
+- `quandl`/`Quandl` package (CHRIS/CME_* codes) — requires API key
+- `quantmod` with Yahoo Finance symbols (^ZC=F, etc.) — free but less reliable
+- Direct CME DataMine or barchart API (paid, but professional-grade)
+- Store basis by location — this is critical for actual procurement decisions
+
+### USDA-AMS Weekly Grain Prices
+
+- USDA AMS API: `https://marsapi.ams.usda.gov/` — free, no key required
+- Milling/feed-grade prices by market
+- Could use `httr2` for fetching
+
+### Functions needed
+
+```r
+fetch_cbot_prices(feedr, commodities = c("corn", "soymeal"), contract = "nearby")
+fetch_usda_ams(feedr, report = "AMS_2231")   # grain and feed weekly
+fetch_futures_curve(feedr, commodity = "corn", months = 12)   # full forward curve
+update_prices(feedr)   # refresh all configured sources
+
+# User-controlled reproducible price scenario
+create_price_scenario(
+  feedr,
+  scenario_id = "q4_projection",
+  prices = prices(feedr) |> filter(price_date >= as.Date("2025-10-01"))
+)
+```
+
+Price APIs should import observations, not silently decide what the formulation price is. Users need
+to be able to calculate spot prices, rolling means, internal projections, or procurement-specific
+prices and save them as named `price_scenarios`.
+
+Futures curves alone provide forward prices, not options-implied volatility distributions. If stochastic
+pricing uses market-implied distributions, the package needs options-implied volatility data from an
+options source. Without options data, futures-based scenarios should be labeled as futures-projected
+or user-assumed volatility scenarios, not market-implied distributions.
+
+**Questions:**
+- What API keys should we require vs. what's free-tier only?
+- Should we allow users to paste in their own price sheets (Excel/CSV upload)?
+- How do we handle basis — user-defined basis on top of futures, or separate market prices?
+- Protein meal prices (SBM 48%, SBM 44%, canola meal, DDGS) are harder to get programmatically — any good free sources?
+
+---
+
+## Least Cost Formulation Engine
+
+### LP problem structure
+
+**Decision variables:** inclusion rate of each ingredient (x_i, kg per 1000 kg of diet)
+
+**Objective:** minimize Σ(price_i × x_i), after normalizing prices and inclusions to canonical solver
+units.
+
+**Constraints:**
+- Nutritional: Σ(nutrient_ij × x_i) >= min_j  for each nutrient j (or <= max_j)
+- Inclusion bounds: lb_i <= x_i <= ub_i  (e.g., corn 0–60%, SBM 0–25%)
+- Sum: Σ(x_i) = 1000 (100% of diet)
+
+### Solver unit normalization
+
+The LP builder must normalize all inputs before constructing the matrix:
+- `x_i`: kg ingredient per 1000 kg complete feed
+- Nutrients: each nutrient converted to its `lp_unit_id`
+- Requirement specs: converted to the same `lp_unit_id` as the ingredient nutrient values
+- Prices: converted to USD per kg ingredient for optimization
+- Reported diet cost: converted back to user-facing units, e.g. USD/short ton or USD/metric tonne
+
+Do not mix percentages, fractions, kg/ton, short tons, metric tonnes, kcal/kg, and Mcal/kg inside the
+solver. Conversion errors in diet formulation are high-impact and hard for users to detect from the
+final answer alone.
+
+### Solver backends — ROI + HiGHS (both)
+
+Use both: ROI as the modeling interface (solver-agnostic, easy to swap), HiGHS as the default backend.
+
+```r
+library(ROI)
+library(ROI.plugin.highs)    # HiGHS — default; fast, free, LP + MILP
+library(ROI.plugin.glpk)     # GLPK — fallback if HiGHS unavailable
+```
+
+ROI gives us:
+- Solver-agnostic problem construction (switch solvers in one line)
+- Familiar API for R users
+- MILP support through the same interface (needed for binary ingredient decisions)
+
+HiGHS gives us:
+- Fastest open-source LP/MILP solver available
+- Warm-start/basis support in HiGHS itself may be useful for 10k-scenario Monte Carlo, but verify
+  whether the R `highs` package and `ROI.plugin.highs` expose the required basis/warm-start controls
+- Direct R bindings via the `highs` package if we ever need to bypass ROI for bulk stochastic solves
+
+**Implementation strategy:** Build the LP matrix construction independently of ROI so we can pass it
+to either `ROI::ROI_solve()` or `highs::highs_solve()` directly for stochastic runs where overhead matters.
+If warm-start support is not exposed through ROI, direct `highs` integration may be required for the
+stochastic engine.
+
+### ompr
+
+Not used — ROI directly gives us enough expressiveness and ompr adds indirection without enough benefit
+for the matrix-heavy LP structure diet formulation requires.
+
+---
+
+## Pipe-First API Design
+
+The pipe (`|>` or `%>%`) is the right mental model here. The entry point is a `feedr_session`, then
+resolved ingredient/nutrient views, then standard dplyr/dbplyr filtering, then feedr verbs.
+
+```r
+library(feedr)
+
+# Full canonical pattern: session → ingredients → filter → prices → formulate → solve
+feedr <- init_feedr_db("~/feedr/swine.db")
+
+feedr |>
+  ingredients_resolved(species = "swine", reference_system = "NASEM2022") |>
+  filter(ingredient_id %in% c("corn_yellow_dent_2", "soymeal_48", "choice_white_grease",
+                               "monocalcium_phosphate", "limestone")) |>
+  set_price_scenario("today_spot") |>
+  formulate_diet(spec = "grower_standard") |>
+  constrain(corn_max = 0.65, soymeal_48_max = 0.30) |>
+  solve_diet()
+
+# filter() is plain dplyr, but prices remain a separate resolved scenario
+feedr |>
+  ingredients_resolved(species = "swine") |>
+  filter(nutrient_id == "me_swine", value > 3000) |>
+  set_price_scenario("q4_projection") |>
+  formulate_diet(spec = "nursery_phase2") |>
+  solve_diet()
+
+# Compare ingredient sets via the pipe
+list(
+  corn_soy = feedr |> ingredients_resolved(species = "swine") |> filter_tag("corn_soy_base"),
+  ddgs_sub = feedr |> ingredients_resolved(species = "swine") |> filter_tag(c("corn_soy_base", "ddgs"))
+) |>
+  compare_diets(spec = "grower_standard")
+```
+
+Resolved accessors return `tbl()` objects (dbplyr lazy tables) — all `dplyr` verbs (`filter`,
+`select`, `mutate`, `arrange`) work on them and push down to DuckDB. When `formulate_diet()`
+receives a resolved ingredient set, it calls `collect()` internally to pull the nutrient matrix and
+selected price scenario into R for LP construction.
+
+Different feedr functions accept different table inputs:
+- `formulate_diet()` / `solve_diet()` — expects a resolved ingredient/nutrient set plus price scenario
+- `evaluate_diet()` — expects a formulation result + optional spec
+- `simulate_growth()` — can accept either ingredient table or a pre-solved `feedr_result`
+- `compare_diets()` — expects a named list of ingredient tables or `feedr_result` objects
+
+### Pipe-friendly design principles
+
+- Every function returns the same class (e.g., `feedr_problem` or `feedr_result`) so the pipe flows
+- Accessors like `ingredients_resolved()`, `prices()`, and `nutrient_values()` wrap `dplyr::tbl()` with a feedr class tag so downstream verbs know the source
+- `filter_*()` helper functions are convenience wrappers over common `filter()` patterns for users less familiar with dplyr
+- `solve_diet()` is the terminal verb that triggers LP solve and returns a `feedr_result`
+- `evaluate_diet()` takes a fixed inclusion vector and checks it against specs — no LP needed
+- The `feedr_problem` object stores: ingredient set, nutrient matrix, normalized price vector, constraints, unit conversions, and provenance hashes
+
+---
+
+## Warnings, Messages, and Errors
+
+This package must be unusually explicit because unit, basis, source, and price mistakes can produce
+plausible-looking but wrong diet formulations.
+
+### Principles
+
+- Use informative errors for invalid or unsafe operations; do not silently guess units, basis, species, or prices
+- Use warnings when the formulation can run but the result may be nutritionally or economically misleading
+- Use messages for normal progress only when helpful, especially during DB initialization, migration, seeding, and API price updates
+- Every solver result should include diagnostics: solver status, binding constraints, missing nutrients, converted units, selected price scenario, and data provenance
+- Errors and warnings should name the ingredient, nutrient, unit, source, and suggested fix whenever possible
+
+### Required checks
+
+- Missing required nutrient values for any ingredient/spec combination
+- Mixed units or basis without explicit conversion, especially as-fed vs dry matter
+- Price scenario missing one or more selected ingredients
+- Nutrient specs using units incompatible with the nutrient definition
+- Ingredient limits outside 0–100% or inconsistent min/max bounds
+- Infeasible LP problems, with the nearest explanation available: impossible bounds, missing nutrients, or conflicting constraints
+- Stale price data when `price_date` is older than a user-defined threshold
+- User lab imports that overwrite or supersede existing active values
+
+### Example diagnostics
+
+```r
+solve_diet(problem)
+#> Error:
+#> Cannot formulate diet because 2 selected ingredients are missing required nutrient `sid_lys`.
+#> Missing values:
+#> - choice_white_grease: sid_lys
+#> - limestone: sid_lys
+#> Suggested fixes:
+#> - mark `sid_lys` as zero for non-protein ingredients, or
+#> - remove these ingredients from constraints requiring `sid_lys`.
+```
+
+```r
+set_price_scenario(problem, "today_spot")
+#> Warning:
+#> Price scenario `today_spot` has no price for `monocalcium_phosphate`.
+#> Formulation will not run until every selected ingredient has a resolved price.
+```
+
+---
+
+## Stochastic Formulation
+
+This is a potential major differentiator from commercial tools.
+
+### Problem statement
+
+Prices and nutrients both vary. A diet that is least-cost today may not be least-cost next month,
+or may fail nutrient specs if ingredient quality varies. Stochastic formulation accounts for this.
+
+### Monte Carlo approach (simplest, most parallelizable)
+
+1. Draw N scenarios of (price vector, nutrient matrix) from historical distributions or user-specified uncertainty
+2. Solve LP for each scenario
+3. Summarize: expected cost, cost at risk (e.g., 95th percentile), probability of constraint violation, ingredient inclusion frequency
+
+Two modes for uncertainty input — user's choice:
+
+**Mode 1: User-specified distributions**
+```r
+formulate_stochastic(
+  spec        = "grower_standard",
+  n_scenarios = 10000,
+  price_uncertainty = list(
+    corn    = list(dist = "lognormal", mean = 220, sd = 30),   # $/ton
+    soymeal = list(dist = "lognormal", mean = 480, sd = 60)
+  ),
+  nutrient_uncertainty = list(
+    corn_me     = list(dist = "normal", mean = 3386, cv = 0.03),  # 3% CV typical
+    sbm_sid_lys = list(dist = "normal", mean = 2.89, cv = 0.02)
+  ),
+  price_correlation = matrix(c(1, 0.6, 0.6, 1), 2, 2),  # corn/SBM correlated
+  parallel = TRUE,
+  workers  = 8
+)
+```
+
+**Mode 2: Futures-projected scenarios**
+```r
+formulate_stochastic(
+  spec = "finisher_standard",
+  scenarios_from = futures_projected_prices(
+    feedr,
+    commodities = c("corn", "soymeal"),
+    horizon_days = 90,
+    volatility = "user_supplied"
+  ),
+  n_scenarios = 10000
+)
+```
+This uses futures prices as the forward price anchor, then applies explicitly supplied volatility and
+correlation assumptions. Do not call this market-implied unless the package has actual options-implied
+volatility data from an options source.
+
+**Mode 3: Options-implied scenarios (Phase 2+)**
+
+If reliable options data are available, use options-implied volatility to parameterize price
+distributions. This requires a separate options data source; futures curves alone are not sufficient.
+
+**Price correlations are critical** — corn and SBM prices are correlated; ignoring this can understate
+combined risk. Correlation must come from historical data, user assumptions, or a properly modeled joint
+distribution. A futures curve does not automatically provide the joint distribution.
+
+### Stochastic outputs
+
+- `cost_distribution()` — histogram / density of diet cost across scenarios
+- `value_at_risk()` — diet cost at given percentile (e.g., "95% chance cost < $X/ton")
+- `ingredient_stability()` — how often each ingredient appears at what inclusion rate
+- `shadow_price_distribution()` — which constraints are binding, how often, at what cost; the distribution of dual variable values across 10k scenarios tells a nutritionist "a unit of SID Lys is worth between $X and $Y with 90% confidence" — a major differentiator from any commercial tool
+
+### Robust optimization
+
+Robust optimization is not simply "minimize worst-case cost." In diet formulation, a useful robust
+model usually means selecting one diet that remains feasible under nutrient/price uncertainty, such as:
+- Worst-case nutrient constraints within defined uncertainty sets
+- Chance constraints, e.g. 95% probability of satisfying SID Lys
+- Minimize expected cost subject to maximum failure probability
+- Minimize cost-at-risk or conditional value-at-risk
+
+Mark robust optimization as Phase 2/3. Do not expose `solve_diet(method = "robust")` until the package
+has a precise mathematical definition, clear user-facing assumptions, and tests showing expected
+behavior on known examples.
+
+### Parallel backends
+
+```r
+library(future)
+library(furrr)
+
+plan(multisession, workers = 8)
+# stochastic engine uses furrr::future_map internally
+```
+
+---
+
+## Requirement Systems
+
+### `nasem_swine()` integration
+
+NASEM 2022 (formerly NRC) provides requirement equations for swine. These are functions of:
+- Body weight (BW)
+- Average daily gain (ADG) target  
+- Feed intake (ADFI) — often itself a function of BW
+- Sex (barrow, gilt, boar)
+- Genetic potential (lean growth rate)
+
+```r
+nasem_swine(
+  bw_kg      = 50,
+  adg_g      = 900,
+  sex        = "barrow",
+  lean_growth = 340  # g/day
+) |>
+  formulate_diet(ingredients = corn_soy_set)
+```
+
+The function returns a `nutrient_spec` object that pipes into `formulate_diet()`.
+
+### Other species
+
+- `nasem_dairy()` — NASEM 2021 for lactating/dry/heifer
+- `nrc_beef()` — NRC 2016 beef cattle
+- `nrc_poultry()` — NRC 1994 (dated, but still widely used)
+
+**Question:** Start with swine only, or design the abstraction to handle multi-species from day 1?
+Starting multi-species immediately ensures the schema doesn't require painful refactors later.
+
+---
+
+## Growth Simulation
+
+`simulate_growth()` could run a pig/poultry/steer from start to finish weight, computing:
+- Feed intake per period (using NASEM intake equations)
+- Requirements per period
+- Diet cost per period
+- Total feed cost per head from start to finish
+- Breakeven sale price given feed cost
+
+```r
+simulate_growth(
+  start_bw_kg  = 25,
+  end_bw_kg    = 130,
+  sex          = "barrow",
+  step_kg      = 5,           # recompute diet every 5 kg BW gain
+  diet_fn      = formulate_diet,
+  spec_fn      = nasem_swine,
+  price_date   = Sys.Date()
+) |>
+  plot_growth_cost()
+```
+
+This is essentially a loop over `nasem_swine()` + `formulate_diet()` at each BW step,
+tracking cumulative feed cost.
+
+---
+
+## `optimize_profit()` — Economic Objective
+
+Instead of minimizing diet cost ($/ton), optimize profit directly:
+- Revenue = sale weight × sale price
+- Cost = feed cost + non-feed cost
+- Profit = Revenue - Cost
+
+This could justify feeding a more expensive diet if it improves ADG or feed conversion
+enough to produce heavier pigs faster.
+
+```r
+optimize_profit(
+  sale_price_per_kg = 1.85,      # $/kg live weight
+  non_feed_cost_per_day = 0.40,  # $/head/day (barn overhead, labor)
+  growth_model = "nasem_swine",
+  ...
+)
+```
+
+**Question:** Do we need a calibrated feed efficiency model to do this correctly?
+A simple linear model (ADFI → ADG via FCR) may underfit. The NASEM mechanistic model
+is more accurate but complex.
+
+---
+
+## Comparing Diet Sources / Equivalent Diets
+
+Users may want to see "what would this diet cost if I sourced corn from Elevator A vs B?"
+or "compare NRC vs NASEM nutrient values for this ingredient."
+
+```r
+# Compare least-cost diets across multiple ingredient databases
+compare_sources(
+  spec    = "grower_standard",
+  sources = c("NRC2012", "NASEM2022", "user_lab_values")
+)
+
+# Compare costs at different ingredient price scenarios
+compare_prices(
+  spec   = "nursery_phase2",
+  prices = list(
+    today    = fetch_cbot_prices("today"),
+    q4_hedge = fetch_futures_curve(month = "2025-12")
+  )
+)
+```
+
+The pipe enables a nice pattern for this:
+```r
+ingredients() |>
+  filter_source("NASEM2022") |>
+  {function(ing) list(
+    corn_soy    = ing |> filter_tag("corn_soy_base"),
+    distillers  = ing |> filter_tag("ddgs_base"),
+    wheat_based = ing |> filter_tag("wheat_base")
+  )}() |>
+  map(~ formulate_diet(.x, spec = "grower_standard")) |>
+  compare_diets()
+```
+
+---
+
+## Custom / Lab-Analyzed Ingredient Values
+
+Users routinely have their own lab analyses that differ from NRC book values.
+
+```r
+# Override NRC values with user's lab analysis
+update_ingredient(
+  feedr,
+  "corn_yellow_dent_2",
+  source_type = "user_lab",
+  source_id = "user_lab_q4_2025",
+  me_swine_kcal_kg = 3320,    # lab value lower than reference
+  cp_pct_as_fed = 8.1,
+  sid_lys_pct_as_fed = 0.20
+)
+
+# Or batch update from a CSV of lab results
+import_lab_results(feedr, "lab_analysis_oct2025.csv", batch_id = "user_lab_oct2025")
+```
+
+---
+
+## Package Structure (proposed)
+
+```
+feedr/
+├── R/
+│   ├── db.R                  # DuckDB connection, on-attach init, schema migrations
+│   ├── ingredients.R         # ingredients(), filter_ingredients(), update_ingredient()
+│   ├── prices.R              # fetch_cbot_prices(), fetch_usda_ams(), update_prices()
+│   ├── requirements.R        # nasem_swine(), nasem_dairy(), nutrient_spec()
+│   ├── formulate.R           # formulate_diet(), solve_diet(), build_lp()
+│   ├── evaluate.R            # evaluate_diet() — check fixed diet against spec
+│   ├── stochastic.R          # formulate_stochastic(), scenario generation
+│   ├── simulate.R            # simulate_growth()
+│   ├── optimize.R            # optimize_profit()
+│   ├── compare.R             # compare_diets(), compare_sources()
+│   ├── import_export.R       # import_lab_results(), export_formulation()
+│   └── plot.R                # plot methods for feedr_result, feedr_stochastic
+├── data-raw/
+│   ├── example_swine_ingredients.csv          # synthetic or redistributable test data
+│   ├── licensed_reference_import_template.csv # template only, no proprietary values
+│   └── ...
+├── inst/
+│   └── extdata/
+│       └── feedr_schema.sql  # DuckDB schema DDL
+├── tests/testthat/
+├── vignettes/
+│   ├── getting-started.Rmd
+│   ├── stochastic-formulation.Rmd
+│   └── nasem-requirements.Rmd
+└── DESCRIPTION
+```
+
+---
+
+## Design Decisions (resolved)
+
+| # | Decision | Resolution |
+|---|---|---|
+| 1 | Multi-species schema? | **Yes — multi-species from day 1.** Swine is the first implementation target, but the schema and energy system abstraction must accommodate poultry, dairy, beef without refactoring. |
+| 2 | Nutrient table format? | **Long format.** One row per ingredient × nutrient × source record. Extensible for new species/nutrients without schema changes. LP matrix construction will pivot to wide internally. |
+| 3 | Database lifecycle? | **Explicit `init_feedr_db()` returning `feedr_session`.** Avoid on-attach writes and avoid requiring hidden global connection state. |
+| 4 | Solver stack? | **ROI + HiGHS both.** ROI for the modeling interface; HiGHS as default backend via `ROI.plugin.highs`. Reserve direct `highs` bindings for bulk stochastic where ROI overhead or warm-start access matters. |
+| 5 | Price APIs? | **Import observations; formulate from named price scenarios.** USDA-AMS for grains where available. Futures via quantmod/Yahoo as best-effort forward price anchors. Protein meals may require user prices or licensed/paid sources. Do not bury prices in ingredients. |
+| 6 | Units? | **First-class schema concept.** Every nutrient, spec, price, and inclusion value has a unit and solver-normalized unit conversion. No silent guessing. |
+| 7 | Seed reference data? | **Only legally redistributable data.** If NRC/NASEM values cannot be redistributed, ship synthetic examples and user import helpers instead. |
+
+## Open Questions (still to decide)
+
+### Data & schema
+
+1. **Nutrient variability storage:** Store per-ingredient CV or SD for each nutrient? This is the backbone of stochastic nutrient draws. Source options: user-supplied, legally redistributable published CVs, or zero-variance default.
+2. **Long-format pivot strategy:** The LP constraint matrix is nutrients × ingredients (wide). Profile whether `tidyr::pivot_wider()` + `collect()` is fast enough for 500-ingredient databases, or whether we need a DuckDB PIVOT query.
+3. **Reference data licensing:** Which exact NRC/NASEM values or equations, if any, can be redistributed in the package?
+4. **Audit implementation:** Use append-only `nutrient_values` plus `archived_at`, and decide whether a separate `audit_log` table is needed for every user-facing write.
+
+### Solver
+
+5. **MILP for binary ingredient decisions:** Some formulations need "use X or Y but not both." HiGHS handles MILP through ROI. Flag this as a `Phase 2` feature — design the constraint API to accept it later without breaking the LP interface.
+6. **Warm-starting stochastic solves:** Verify first. HiGHS supports warm-start/basis concepts, but implementation depends on what the R `highs` and `ROI.plugin.highs` interfaces expose. If unavailable through ROI, use direct `highs` for stochastic solves.
+
+### Price APIs
+
+7. **Protein meal price sources:** USDA AMS Livestock, Poultry & Grain Market News has some feed ingredient reports. USSEC publishes SBM weekly. Investigate `marsapi.ams.usda.gov` coverage before falling back to literature defaults.
+8. **Futures basis:** Ship a user-editable basis table (`prices_basis`) keyed by location + commodity. Default basis = 0. Users fill in their local elevator basis.
+
+### UX / pipe design
+
+9. **`plot()` as terminal verb or return data?** Lean toward returning data (tibbles, lists) so users can pipe into their own ggplot2 — more composable. Ship `autoplot()` methods as convenience wrappers.
+10. **Interactive ingredient browser:** A `feedr_gadget()` Shiny widget for exploring the DB and building ingredient sets. Mark as Phase 2 — but design resolved accessor outputs so selections can return to console for scripting.
+
+---
+
+## Potential Differentiators Summary
+
+| Feature | Commercial tools | feedr |
+|---|---|---|
+| Stochastic formulation | Rare / expensive add-on | Core feature |
+| Futures price integration | Manual entry | API-driven |
+| Open ingredient database | Locked / proprietary | Open, user-extensible |
+| Reproducibility | GUI-based, hard to script | Full R scripts, git-friendly |
+| Custom growth models | Limited | Plug in any R model |
+| Cost | $$$–$$$$ / seat / year | Free |
+| Integration with R ecosystem | None | ggplot2, tidyverse, Quarto, etc. |
+| Stochastic shadow prices | No | Yes (LP dual variables × scenarios) |
+
+---
+
+## Immediate Next Steps (if we proceed)
+
+1. Lock the normalized DuckDB schema: ingredients, nutrients, units, nutrient values, prices, price scenarios, ingredient limits
+2. Implement `init_feedr_db()` returning `feedr_session`, with explicit path, seed, migrate, and message behavior
+3. Seed a legal minimal example database (corn, SBM 48%, choice white grease, monocalcium phosphate, limestone, NaCl — enough to run a real nursery diet)
+4. Implement deterministic `formulate_diet()` with ROI + HiGHS backend and strict unit normalization
+5. Add structured warnings/errors for missing nutrients, missing prices, infeasible constraints, and unit/basis conflicts
+6. Test against a known MIXIT/BestMix/manual LP result to validate LP math
+7. Add NASEM swine requirement equations only after licensing/implementation details are clear
+8. Add price import and named price scenarios before stochastic formulation
+9. Defer stochastic formulation until deterministic swine formulation is validated
+10. Write vignette showing the full explicit-session workflow
+
+---
+
+*This document is a living brainstorm. Questions marked with **Question:** need decisions before coding begins.*

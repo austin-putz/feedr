@@ -1,23 +1,36 @@
-# feedr
+<div align="center">
+  <img src="logos/feedr_logo_Gemini_v1.png" width="200" alt="feedr logo" />
+  <h1>feedr</h1>
+  <p><strong>Open-source animal ration optimization for R</strong></p>
 
-[![R-CMD-check](https://github.com/austin-putz/feedr/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/austin-putz/feedr/actions/workflows/R-CMD-check.yaml)
+  [![R-CMD-check](https://github.com/austin-putz/feedr/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/austin-putz/feedr/actions/workflows/R-CMD-check.yaml)
+  [![License: GPL-3](https://img.shields.io/badge/License-GPL--3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+  [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html)
 
-`feedr` is an open-source R package for livestock diet formulation, feed optimization, and animal nutrition modeling.
+  <br/>
+</div>
 
-The goal is to build a pipe-first, table-first alternative to commercial formulation tools, with a local DuckDB backend, explicit data provenance, and support for deterministic and stochastic least-cost formulation.
+---
 
-## Status
+`feedr` is a pipe-first, table-first R package for livestock diet formulation, feed optimization, and animal nutrition modeling — a modern, open-source alternative to commercial ration balancing tools.
 
-`feedr` is in early development. The current repository contains the initial package scaffold and planning documents. The API examples below describe the intended design direction, not a complete implemented feature set.
+It uses a local [DuckDB](https://duckdb.org/) backend for fast, file-free data storage with explicit data provenance, and supports both deterministic and stochastic least-cost formulation.
 
-## Design Principles
+> **Status:** early development — the API examples below describe the intended design, not a fully implemented feature set.
 
-- **Table-first workflows:** users filter tables with `dplyr`, then pass those tables into generalized verbs.
-- **Few core functions:** prefer `get_table()` and `mutate_table()` over many narrow helper functions.
-- **Readable identifiers:** use short ingredient symbols such as `CYD2`, `SBM48`, `DDGS`, and `MCP` for user-facing code.
-- **Explicit units and basis:** keep `unit_id` and `basis` separate, so users can filter by `basis == "as_fed"` or `basis == "dry_matter"`.
-- **Auditable data:** package seed/reference rows are protected; users add lab values or project overrides as new rows.
-- **Open source by design:** released under GPL-3-or-later.
+---
+
+## Features
+
+- **Pipe-first API** — chain operations naturally with `|>` and `dplyr`
+- **Table-first workflows** — filter ingredient and price tables, then pass them into generalized verbs
+- **Local DuckDB backend** — no server, no files, fast columnar storage
+- **Readable identifiers** — short symbols like `CYD2`, `SBM48`, `DDGS`, `MCP` throughout
+- **Explicit units and basis** — separate `unit_id` and `basis` fields; filter by `"as_fed"` or `"dry_matter"`
+- **Auditable data** — seed/reference rows are protected; user lab values and project overrides are tracked separately
+- **Open source** — GPL-3-or-later
+
+---
 
 ## Intended Workflow
 
@@ -50,59 +63,72 @@ ingredients |>
   solve_diet()
 ```
 
-## Generic Table Mutation
+### Adding Custom Nutrient Values
 
-The planned write API is also pipe-first. Users select a table, then add or modify rows with `mutate_table()`.
+The write API is also pipe-first. Select a table, then insert or modify rows with `mutate_table()`:
 
 ```r
 feedr |>
   get_table("nutrient_values") |>
   mutate_table(
     ingredient_symbol = "CYD2",
-    nutrient_id = "me_swine",
-    nutrient_value = 3310,
-    unit_id = "kcal_kg",
-    basis = "as_fed",
-    source_type = "user_lab",
-    source_id = "lab_oct2025",
-    .mode = "insert"
+    nutrient_id       = "me_swine",
+    nutrient_value    = 3310,
+    unit_id           = "kcal_kg",
+    basis             = "as_fed",
+    source_type       = "user_lab",
+    source_id         = "lab_oct2025",
+    .mode             = "insert"
   )
 ```
 
-This keeps the package flexible: the same mutation approach can work across nutrient values, prices, ingredient symbols, project metadata, and user-defined extension fields.
+The same mutation approach works across nutrient values, prices, ingredient symbols, project metadata, and user-defined extension fields.
 
-## GitHub Actions
+---
 
-GitHub Actions is GitHub's automation system. In this repository, the first workflow runs R package checks whenever code is pushed or a pull request is opened.
+## Design Principles
 
-The workflow runs:
+| Principle | Description |
+|-----------|-------------|
+| Table-first | Users filter tables with `dplyr`, then pass them into generalized verbs |
+| Few core functions | Prefer `get_table()` and `mutate_table()` over many narrow helpers |
+| Readable identifiers | Short ingredient symbols (`CYD2`, `SBM48`) for user-facing code |
+| Explicit units | `unit_id` and `basis` kept separate so users can filter precisely |
+| Auditable data | Seed rows are protected; users add lab values as new rows |
 
-- dependency installation
-- package build checks
-- `R CMD check`
-- any tests added under `tests/testthat`
-
-This helps catch broken examples, missing dependencies, failing tests, and package structure problems before changes are merged.
+---
 
 ## Development Roadmap
 
-Near-term priorities:
+**Near-term**
 
-1. Implement `init_feedr_db()` and the `feedr_session` object.
-2. Implement `get_table()` for lazy DuckDB table access.
-3. Implement pipe-first `mutate_table()` with row policies and audit logging.
-4. Create a minimal schema for ingredients, nutrient values, prices, units, requirements, and constraints.
-5. Add deterministic least-cost formulation with explicit units, basis, and provenance.
+1. Implement `init_feedr_db()` and the `feedr_session` object
+2. Implement `get_table()` for lazy DuckDB table access
+3. Implement pipe-first `mutate_table()` with row policies and audit logging
+4. Create a minimal schema for ingredients, nutrient values, prices, units, requirements, and constraints
+5. Add deterministic least-cost formulation with explicit units, basis, and provenance
 
-Longer-term goals:
+**Longer-term**
 
-- stochastic formulation from historical prices and nutrient variability
-- reusable price scenarios
-- requirement equations and animal profiles
-- formulation diagnostics and infeasibility explanations
+- Stochastic formulation from historical prices and nutrient variability
+- Reusable price scenarios
+- Requirement equations and animal profiles
+- Formulation diagnostics and infeasibility explanations
 - Shiny or companion GUI support
+
+---
+
+## CI
+
+GitHub Actions runs R package checks on every push and pull request:
+
+- Dependency installation
+- Package build checks
+- `R CMD check`
+- Tests under `tests/testthat/`
+
+---
 
 ## License
 
-`feedr` is licensed under GPL-3-or-later.
-
+`feedr` is licensed under [GPL-3-or-later](LICENSE).

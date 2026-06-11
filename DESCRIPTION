@@ -2,7 +2,7 @@ Package: feedr
 Title: Livestock Diet Formulation and Optimization
 Version: 0.0.0.9000
 Authors@R:
-    person("Austin", "Putz", email = "putz.austin@gmail.com", role = c("aut", "cre"))
+    c(person("Austin", "Putz", email = "putz.austin@gmail.com", role = c("aut", "cre")))
 Description: Open-source least-cost diet formulation for livestock nutritionists
     and researchers. Pipe-first API with a DuckDB backend.
 License: GPL (>= 3)

@@ -1,8 +1,6 @@
-# NEWS.md
+# feedr 0.0.0.9000
 
-Track all package or version changes. 
-
-feedr was started on 2026-06-10 by Austin Putz. 
-
+- Initial development version.
+- Added package scaffold, planning documents, GPL-3-or-later licensing, and CI configuration.
 
 

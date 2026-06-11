@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="logos/feedr_logo_Gemini_v1.png" width="450" alt="feedr logo" />
+  <img src="logos/feedr_logo_Gemini_v1.png" width="650" alt="feedr logo" />
   <h1>feedr</h1>
   <p><strong>Open-source animal ration optimization for R</strong></p>
 

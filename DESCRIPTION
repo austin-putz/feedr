@@ -1,0 +1,18 @@
+Package: feedr
+Title: Livestock Diet Formulation and Optimization
+Version: 0.0.0.9000
+Authors@R:
+    person("Austin", "Putz", email = "austin@putz.io", role = c("aut", "cre"))
+Description: Open-source least-cost diet formulation for livestock nutritionists
+    and researchers. Pipe-first API with a DuckDB backend.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Depends:
+    R (>= 4.1.0)
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+URL: https://github.com/austin-putz/feedr
+BugReports: https://github.com/austin-putz/feedr/issues

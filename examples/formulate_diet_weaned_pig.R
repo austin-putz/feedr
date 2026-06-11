@@ -6,7 +6,7 @@
 # arguments, pipes, and expected objects are the important part.
 
 library(feedr)
-library(dplyr)
+library(dplyr)  # filter() -> lazy filter tables 
 library(tibble)
 
 
@@ -81,10 +81,8 @@ weaned_pig_spec_nrc <- diet_spec(
 # 4. Select candidate ingredients --------------------------------------------
 
 candidate_ingredients <- feedr |>
-  ingredients_resolved(
-    species = "swine",
-    reference_system = "user_preferred"
-  ) |>
+  get_table("ingredients") |>
+  filter(species == "swine", reference_system == "user_preferred") |>
   filter_tag(c("nursery", "phase_1", "available")) |>
   filter(
     ingredient_id %in% c(

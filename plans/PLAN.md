@@ -2,9 +2,68 @@
 
 ## Vision
 
-A competitive open-source alternative to MIXIT, AccuMix, Brill, Format, BestMix, AMTS, Spartan, etc.
+A competitive open-source alternative to MIXIT, AccuMix, `Brill`, Format, `BestMix`, AMTS, Spartan, etc.
 Designed for R users — nutritionists, researchers, integrators — with a pipe-first API, DuckDB backend,
 and stochastic formulation capabilities that commercial tools lack or hide behind expensive licenses.
+
+## Core API Philosophy
+
+feedr should be built around generalized, pipe-friendly verbs that accept table-like input, not around
+many narrow helper functions. The project owner strongly dislikes APIs such as `ingredients()`,
+`ingredients_resolved()`, `prices()`, `nutrient_values()`, `filter_tag()`, or `filter_source()` when
+those functions merely wrap table selection or `dplyr::filter()`. Those helpers make the package feel
+larger while making it less flexible.
+
+The preferred model is:
+
+```r
+feedr <- init_feedr_db()
+
+feedr |>
+  get_table("ingredients") |>
+  filter(species == "swine", ingredient_group == "nursery") |>
+  formulate_diet(spec = nursery_spec, prices = nursery_prices)
+```
+
+This is the same broad style used in tidyverse packages: users should be able to filter, join, mutate,
+and select from different tables, then pass the resulting table into one clear verb. A function should
+care about the columns and object shape it receives, not about which exact table or helper produced it.
+For example, a selected ingredient set might come from:
+
+- `get_table("ingredients")` filtered by species, production class, availability, or ingredient group
+- `get_table("nutrient_values")` filtered to a source system, lab batch, or ingredient symbols such as `CYD2` and `SBM48`
+- `get_table("prices")` filtered to a location, supplier, price date, or forward scenario
+- `get_table("requirements")` filtered to a reference system, species, and production class
+- a user-created tibble, CSV import, spreadsheet import, or lab result table with the required columns
+
+This mirrors the flexibility of `tidybreed`, where users can filter different upstream tables before
+passing them to one verb such as `add_phenotype()`: they might preselect animals from metadata, genotypes,
+haplotypes, or EBVs before phenotyping. feedr should allow the same kind of broad preselection before
+formulation, evaluation, pricing, comparison, and simulation.
+
+Core design rules:
+
+- Prefer one generalized verb that accepts a table over many narrowly named helper functions.
+- Prefer explicit table columns plus `filter()` over source-, species-, or table-specific function names.
+- Support multi-table workflows by piping the primary table and passing other filtered tables through
+  clear named arguments such as `prices`, `requirements`, `constraints`, or `nutrient_uncertainty`.
+- Use short, stable ingredient symbols for user-facing filtering, like stock tickers, while keeping
+  full `ingredient_id` values as internal database keys.
+- Use generalized table write functions first. Version 1 should expose `mutate_table()` for inserting,
+  updating, archiving, or extending table rows instead of narrow wrappers such as `update_ingredient()`.
+- Use meaningful, table-specific value column names. Avoid bare columns like `value`, `mean_value`,
+  or `min_value` in tables that users may collect and join; prefer names such as `nutrient_value`,
+  `price_value`, `requirement_min`, and `constraint_max`.
+- Keep `basis` as an explicit column. Do not hide `as_fed`, `dry_matter`, or energy-density basis
+  inside `unit_id`; users must be able to filter and join on basis directly.
+- Avoid helper functions that only save a few keystrokes; they add API surface without adding flexibility.
+- If a convenience function exists, it must add real domain behavior, validation, or transformation beyond
+  `get_table()` plus `dplyr`.
+- Argument names must be obvious without reading documentation: use names like `ingredients`, `spec`,
+  `prices`, `constraints`, `animal`, `source`, `unit`, `basis`, `scenario_id`, and `project_id`.
+- Avoid abbreviations, clever argument names, overloaded `...`, and arguments whose meaning changes by input type.
+- Functions should accept data frames, tibbles, and lazy dbplyr tables where practical, then validate required
+  columns with clear error messages.
 
 ## Project Operations Goal
 
@@ -15,6 +74,7 @@ explicitly documented and justified.
 
 This means implementation should avoid assumptions that only hold on Apple devices or a single
 developer machine:
+
 - Use portable R APIs for paths, file permissions, temp directories, and process behavior
 - Avoid shell commands, filesystem paths, compiled dependencies, or system tools that only work on macOS
 - Test package checks on all major GitHub Actions OS runners before considering changes complete
@@ -34,7 +94,7 @@ developer machine:
 ├───────────────────────┬─────────────────────────┤
 │    Solver layer       │   Stochastic engine      │  ROI + HiGHS / lpSolve / Rsymphony
 ├───────────────────────┴─────────────────────────┤
-│              Ingredient/price layer              │  filter_ingredients(), price feeds
+│              Ingredient/price layer              │  get_table(), price feeds
 ├─────────────────────────────────────────────────┤
 │                  DuckDB backend                  │  local persistent DB, Arrow interchange
 └─────────────────────────────────────────────────┘
@@ -47,6 +107,7 @@ only load functions. Database creation is explicit through `init_feedr_db()` so 
 where persistent files are written and what seed data is installed.
 
 Recommended behavior:
+
 1. `init_feedr_db()` creates or opens a DuckDB file at a user-specified location
 2. It checks schema version and runs migrations after explicit confirmation or with `migrate = TRUE`
 3. It seeds package-provided open/licensed reference data only when requested or when the DB is empty
@@ -54,6 +115,7 @@ Recommended behavior:
 5. It registers a finalizer for that session object so the connection closes cleanly
 
 This means nutritionists do:
+
 ```r
 library(feedr)
 
@@ -63,7 +125,8 @@ feedr <- init_feedr_db(
   migrate = TRUE
 )
 
-ingredients(feedr)     # view the resolved ingredient database
+feedr |>
+  get_table("ingredients")     # lazy DuckDB table for ingredient rows
 ```
 
 ### Database path options
@@ -99,8 +162,8 @@ one R session.
 feedr <- init_feedr_db("~/feedr/swine.db")
 
 feedr |>
-  ingredients() |>
-  formulate_diet(spec = "grower_standard") |>
+  get_table("ingredients") |>
+  formulate_diet(spec = "grower_standard", prices = "today_spot") |>
   solve_diet()
 ```
 
@@ -115,23 +178,29 @@ connection.
 ### Persistence model — file-backed DB, explicit versioning, no save_db()
 
 DuckDB is file-backed. Every write commits to disk automatically — **there is no `save_db()`**.
-The moment a user calls `update_ingredient()`, the value is durably on disk. This is the same
-guarantee SQLite provides and what users should expect.
+The moment a user calls a write function such as `mutate_table()`, the value is durably on disk. This
+is the same guarantee SQLite provides and what users should expect.
 
 Reference values, user lab values, and user overrides must be stored as separate records with explicit
 source metadata. Do not overload a single `source` string with precedence, provenance, project, and
 batch semantics.
 
-```
-nutrient_values
-┌──────────────────────┬────────────┬───────┬─────────────┬───────────────┬──────────────┬────────────┐
-│ ingredient_id        │ nutrient_id│ value │ source_type │ source_id     │ batch_id     │ effective  │
-│ corn_yellow_dent_2   │ me_swine   │ 3386  │ reference   │ NRC2012       │ seed_v1      │ 2012-01-01 │
-│ corn_yellow_dent_2   │ me_swine   │ 3310  │ user_lab    │ lab_oct2025   │ oct2025_lab  │ 2025-10-15 │
-│ corn_yellow_dent_2   │ sid_lys    │ 0.19  │ reference   │ NRC2012       │ seed_v1      │ 2012-01-01 │
-│ corn_yellow_dent_2   │ sid_lys    │ 0.21  │ user_lab    │ lab_oct2025   │ oct2025_lab  │ 2025-10-15 │
-└──────────────────────┴────────────┴───────┴─────────────┴───────────────┴──────────────┴────────────┘
-```
+Use short ingredient symbols for user-facing code, like stock ticker symbols, while keeping full
+`ingredient_id` values as stable database keys. For example, users should be able to write
+`filter(ingredient_symbol %in% c("CYD1", "CYD2", "SBM48"))` instead of long slug lists such as
+`"corn_yellow_dent_2"` and `"soymeal_48"`. Symbols must be unique within their namespace and should
+appear in user-facing tables and views, including `ingredients`, `nutrient_values`, `prices`, and
+formulation result tables. Raw fact tables can still store `ingredient_id`; `get_table()` should join
+or project `ingredient_symbol` for users.
+
+`nutrient_values`
+
+| ingredient_id | ingredient_symbol | nutrient_id | nutrient_value | unit_id | basis | source_type | source_id | effective_date |
+|---|---|---|---:|---|---|---|---|---|
+| corn_yellow_dent_2 | CYD2 | me_swine | 3386 | kcal_kg | as_fed | reference | NRC2012 | 2012-01-01 |
+| corn_yellow_dent_2 | CYD2 | me_swine | 3310 | kcal_kg | as_fed | user_lab | lab_oct2025 | 2025-10-15 |
+| corn_yellow_dent_2 | CYD2 | sid_lys | 0.19 | pct | as_fed | reference | NRC2012 | 2012-01-01 |
+| corn_yellow_dent_2 | CYD2 | sid_lys | 0.21 | pct | as_fed | user_lab | lab_oct2025 | 2025-10-15 |
 
 A resolved view should apply explicit precedence at query time:
 - Project/client overrides win over global user lab values
@@ -142,8 +211,9 @@ A resolved view should apply explicit precedence at query time:
 ```sql
 -- conceptual resolved nutrient values
 SELECT DISTINCT ON (ingredient_id, nutrient_id, project_id)
-  ingredient_id, nutrient_id, value, unit_id, source_type, source_id, batch_id, effective_date
+  ingredient_id, ingredient_symbol, nutrient_id, nutrient_value, unit_id, basis, source_type, source_id, batch_id, effective_date
 FROM nutrient_values
+JOIN ingredients USING (ingredient_id)
 WHERE archived_at IS NULL
 ORDER BY ingredient_id, nutrient_id, project_id,
   CASE source_type
@@ -162,26 +232,51 @@ provenance.
 
 Key rules:
 - Package updates only INSERT reference rows into explicitly versioned seed batches — user rows are never touched
-- `update_ingredient()` creates a new `project_override` or `user_lab` row instead of destructively editing history
-- `reset_to_defaults()` archives matching user/project rows for a given ingredient/nutrient (with confirmation prompt)
-- `reset_all_to_defaults()` archives the entire user/project layer (nuclear option, confirmation required)
+- `mutate_table()` is the version 1 write primitive for adding rows, archiving rows, or updating mutable rows in any supported table
+- Reference rows and package seed rows are immutable through the feedr API; users can add `project_override` or `user_lab` rows, but cannot modify seeded NRC/NASEM-style rows in place
+- Resetting to defaults should be expressed as a generic table mutation that archives matching user/project rows, not as a required v1 helper
 - Raw value tables and audit tables are always queryable for reproducibility
 
 ```r
-# User updates corn ME — persists immediately, no save needed
-update_ingredient(feedr, "corn_yellow_dent_2", me_swine_kcal_kg = 3310, source_id = "lab_oct2025")
+# User adds a lab value for corn ME — persists immediately, no save needed
+feedr |>
+  get_table("nutrient_values") |>
+  mutate_table(
+    ingredient_symbol = "CYD2",
+    nutrient_id = "me_swine",
+    nutrient_value = 3310,
+    unit_id = "kcal_kg",
+    basis = "as_fed",
+    source_type = "user_lab",
+    source_id = "lab_oct2025",
+    batch_id = "oct2025_lab",
+    effective_date = as.Date("2025-10-15"),
+    .mode = "insert"
+  )
 
-# Batch import lab sheet — writes to user layer
-import_lab_results(feedr, "oct2025_proximate.csv", batch_id = "oct2025_lab")
+# Batch lab sheet — same generic write path
+feedr |>
+  get_table("nutrient_values") |>
+  mutate_table(
+    .rows = readr::read_csv("oct2025_proximate.csv"),
+    .mode = "insert",
+    .defaults = list(source_type = "user_lab", batch_id = "oct2025_lab")
+  )
 
-# See resolved values (what formulation will actually use)
-feedr |> ingredients_resolved() |> filter(ingredient_id == "corn_yellow_dent_2")
+# See ingredient rows used for formulation
+feedr |> get_table("ingredients") |> filter(ingredient_symbol == "CYD2")
 
 # See all raw values for an ingredient — compare user vs. reference
-feedr |> nutrient_values() |> filter(ingredient_id == "corn_yellow_dent_2")
+feedr |> get_table("nutrient_values") |> filter(ingredient_symbol == "CYD2")
 
-# Undo a specific user override, revert to NRC value
-reset_to_defaults(feedr, "corn_yellow_dent_2", nutrient = "me_swine_kcal_kg")
+# Undo a specific user override by archiving the matching user rows
+feedr |>
+  get_table("nutrient_values") |>
+  filter(ingredient_symbol == "CYD2", nutrient_id == "me_swine", source_type == "user_lab") |>
+  mutate_table(
+    .mode = "archive",
+    .reason = "revert_to_reference"
+  )
 ```
 
 ### `load_db()` — switching database files
@@ -210,6 +305,146 @@ seeded into the new DB only when requested or when `seed = TRUE`.
 
 ---
 
+## Generic Table Mutation API
+
+Version 1 should prioritize one generalized write function instead of domain-specific wrappers.
+`mutate_table()` is the pipe-first write-side companion to `get_table()`: users select a table with
+`get_table()`, optionally filter rows, then call `mutate_table()` with the fields they want to insert,
+update, archive, or add.
+
+```r
+feedr |>
+  get_table("nutrient_values") |>
+  mutate_table(
+    ingredient_symbol = "CYD2",
+    nutrient_id = "me_swine",
+    nutrient_value = 3310,
+    unit_id = "kcal_kg",
+    basis = "as_fed",
+    source_type = "user_lab",
+    .mode = "insert"
+  )
+```
+
+The intended ergonomics are deliberately close to `dplyr::mutate()`:
+
+```r
+feedr |>
+  get_table("nutrient_values") |>
+  mutate_table(
+    ingredient_symbol = "CYD2",
+    nutrient_id = "me_swine",
+    nutrient_value = 3000,
+    unit_id = "kcal_kg",
+    basis = "as_fed",
+    source_type = "user_lab",
+    .mode = "insert"
+  )
+```
+
+The same pattern applies to any writable table:
+
+```r
+feedr |>
+  get_table("ingredients") |>
+  mutate_table(
+    ingredient_id = "corn_yellow_dent_3",
+    ingredient_symbol = "CYD3",
+    name = "Yellow Dent #3 Corn",
+    ingredient_class = "grain",
+    .mode = "insert"
+  )
+```
+
+Argument contract:
+
+| argument | meaning |
+|---|---|
+| `.data` | piped table returned by `feedr |> get_table("table_name")`; carries session and table metadata |
+| `...` | named column values to insert/update, e.g. `ingredient_symbol = "CYD2"` or `nutrient_value = 3310` |
+| `.rows` | optional tibble/data frame for bulk insert/upsert; useful for CSV/Excel imports |
+| `.mode` | write behavior: `"insert"`, `"upsert"`, `"update"`, `"archive"`, or `"add_columns"` |
+| `.by` | key columns for upsert/update; required when selected rows do not identify the target unambiguously |
+| `.defaults` | named values added to missing columns before validation, e.g. `source_type`, `batch_id`, `project_id` |
+| `.allow_protected` | internal/admin escape hatch only; normal users should not set this |
+| `.reason` | audit message for archive/update/schema changes |
+
+Rules:
+- `mutate_table()` must infer `feedr` and target table from `.data`; users should not pass `feedr` or `table` again
+- Control arguments use dot prefixes (`.mode`, `.by`, `.rows`) so ordinary argument names map directly to table columns
+- Every non-dot argument is interpreted as a column in the selected table; unknown columns fail unless `.mode = "add_columns"`
+- `mutate_table()` must validate table name, required columns, column types, units, and key uniqueness before writing
+- `insert` is the preferred mode for audit-sensitive tables such as `nutrient_values`, `prices`, and lab/import records
+- `update` is allowed only for explicitly mutable rows and metadata fields; it must fail on protected seed/reference rows
+- `archive` sets `archived_at` and audit metadata instead of deleting rows
+- `add_columns` can add user/project fields when allowed by table policy, but must record schema changes in an audit table
+- Domain wrappers such as `update_ingredient()`, `reset_to_defaults()`, or `import_lab_results()` are optional later conveniences, not v1 primitives
+
+Examples:
+
+```r
+# Add a user-defined ingredient symbol alias
+feedr |>
+  get_table("ingredient_symbols") |>
+  mutate_table(
+    ingredient_id = "corn_yellow_dent_2",
+    ingredient_symbol = "CORN2",
+    symbol_type = "project",
+    project_id = "smith_farms",
+    .mode = "insert"
+  )
+
+# Add project-specific columns to an allowed user extension table
+feedr |>
+  get_table("ingredients") |>
+  mutate_table(
+    supplier_region = "VARCHAR",
+    .mode = "add_columns",
+    .reason = "track local supplier regions"
+  )
+
+# Update an allowed user/project field on selected rows
+feedr |>
+  get_table("ingredients") |>
+  filter(ingredient_symbol == "CYD2") |>
+  mutate_table(
+    supplier_region = "central_iowa",
+    .mode = "update",
+    .reason = "set local procurement region"
+  )
+```
+
+### Row Protection And Immutability
+
+Yes, feedr can have immutable rows at the package API level. The implementation should use explicit
+row policy columns and enforce them inside `mutate_table()` transactions.
+
+Recommended common row-policy columns for mutable/audited tables:
+
+| column | type | notes |
+|---|---|---|
+| row_origin | VARCHAR | "package_seed", "user", "import", "calculated" |
+| row_policy | VARCHAR | "protected", "append_only", "mutable", "archived" |
+| locked | BOOLEAN | true means normal user writes cannot update/archive the row |
+| created_by | VARCHAR | package/user/import source |
+| created_at | TIMESTAMP | |
+| updated_at | TIMESTAMP | |
+| archived_at | TIMESTAMP | NULL means active |
+
+Policy behavior:
+- NRC/NASEM-style package seed rows should be `row_origin = "package_seed"` and `row_policy = "protected"`
+- Protected rows cannot be updated, archived, or deleted by `mutate_table()` unless an internal migration path sets `.allow_protected = TRUE`
+- User corrections to protected values are represented as new rows with `source_type = "user_lab"` or `source_type = "project_override"`
+- Append-only tables can accept inserts and archives but not destructive updates
+- Mutable metadata tables can allow updates when `by` identifies rows unambiguously
+
+Important limitation: this protects users who go through the feedr API. A local DuckDB file cannot be
+treated as tamper-proof if a user opens it directly with another tool and edits raw tables. For
+scientific reproducibility, feedr should record row policies, audit writes, and make tampering detectable
+where practical, but it should not claim database-level immutability against direct file modification.
+
+---
+
 ## Data Licensing and Seed Data
 
 Bundled seed data must be legally redistributable. Do not assume NRC/NASEM tables can be copied into
@@ -233,11 +468,13 @@ This is a blocking issue for any claim that the package ships NRC/NASEM referenc
 ### Tables
 
 #### `ingredients`
+
 Ingredient identity and metadata only. No nutrient values and no prices live here.
 
 | column | type | notes |
 |---|---|---|
 | ingredient_id | VARCHAR PK | slug, e.g. "corn_yellow_dent_2" |
+| ingredient_symbol | VARCHAR UNIQUE | short user-facing code, e.g. "CYD2", "SBM48", "DDGS", "LYS" |
 | name | VARCHAR | "Yellow Dent #2 Corn" |
 | ingredient_class | VARCHAR | "grain", "protein_meal", "fat", "mineral", etc. |
 | default_species | VARCHAR | optional convenience tag, not a constraint |
@@ -246,6 +483,33 @@ Ingredient identity and metadata only. No nutrient values and no prices live her
 | created_at | TIMESTAMP | |
 | updated_at | TIMESTAMP | |
 
+Rules:
+- `ingredient_id` is the stable internal key used for joins, audit history, and reproducibility
+- `ingredient_symbol` is the short code users see and filter on in examples, vignettes, and interactive workflows
+- Symbols should be uppercase ASCII, concise, and memorable; examples: `CYD1`, `CYD2`, `SBM44`, `SBM48`, `DDGS`, `WHEY`, `LYS`, `MCP`, `LIME`
+- Symbols must not encode mutable values such as price, supplier, or current nutrient composition
+- If a symbol changes, keep the old symbol as an alias rather than breaking old scripts
+- User-facing views returned by `get_table()` should include both `ingredient_id` and `ingredient_symbol` when ingredient identity is present
+
+#### `ingredient_symbols`
+Aliases and user/project-specific shorthand for ingredients. This allows users to keep local codes
+without changing the canonical ingredient record.
+
+| column | type | notes |
+|---|---|---|
+| ingredient_id | VARCHAR | FK → ingredients |
+| ingredient_symbol | VARCHAR | alias, e.g. "CORN2", "MYCORN", "SBM" |
+| symbol_type | VARCHAR | "canonical", "alias", "user", "project" |
+| project_id | VARCHAR | optional project/client scope |
+| source_id | VARCHAR | provenance for imported symbol sets |
+| active | BOOLEAN | hide retired symbols without deleting history |
+| created_at | TIMESTAMP | |
+
+Rules:
+- Canonical package symbols must be globally unique
+- User/project symbols must be unique within `project_id`
+- Ambiguous symbols must fail with a clear error and suggest filtering by `project_id` or `ingredient_id`
+
 #### `ingredient_tags`
 Many-to-many tags for filtering ingredient sets.
 
@@ -253,6 +517,47 @@ Many-to-many tags for filtering ingredient sets.
 |---|---|---|
 | ingredient_id | VARCHAR | FK → ingredients |
 | tag | VARCHAR | e.g. "corn_soy_base", "ddgs", "nursery_safe" |
+
+#### `table_extensions`
+User/project-added fields created through `mutate_table(..., .mode = "add_columns")`. This records
+schema extension intent and keeps added fields discoverable.
+
+| column | type | notes |
+|---|---|---|
+| table_name | VARCHAR | table being extended |
+| column_name | VARCHAR | added column |
+| column_type | VARCHAR | DuckDB type |
+| description | VARCHAR | user-facing purpose |
+| project_id | VARCHAR | optional project/client scope |
+| created_by | VARCHAR | user/import source |
+| created_at | TIMESTAMP | |
+
+Rules:
+- Only tables with an explicit extension policy should allow added columns
+- Added columns should be namespaced or project-scoped when possible to avoid collisions
+- Required package columns cannot be dropped, renamed, or type-changed by `mutate_table()`
+
+#### `audit_log`
+Append-only record of writes performed through `mutate_table()`, migrations, imports, and schema
+extensions.
+
+| column | type | notes |
+|---|---|---|
+| audit_id | VARCHAR PK | UUID |
+| table_name | VARCHAR | table changed |
+| operation | VARCHAR | "insert", "upsert", "update", "archive", "add_columns", "migration" |
+| row_key | VARCHAR | serialized primary/key fields where practical |
+| changed_columns | VARCHAR | JSON/list of affected columns |
+| reason | VARCHAR | user/import/migration reason |
+| source_id | VARCHAR | source file, package migration, user action |
+| project_id | VARCHAR | optional project/client scope |
+| created_by | VARCHAR | package/user/import source |
+| created_at | TIMESTAMP | |
+
+Rules:
+- `audit_log` itself is append-only and protected
+- `mutate_table()` should write one audit event per logical operation, not necessarily one event per row for bulk imports
+- Audit metadata must be enough to explain how user/project rows superseded protected reference rows
 
 #### `nutrients`
 Canonical nutrient definitions. This table is critical for units, species specificity, LP conversion,
@@ -283,7 +588,7 @@ Canonical unit registry and conversion metadata.
 
 | column | type | notes |
 |---|---|---|
-| unit_id | VARCHAR PK | "pct_as_fed", "pct_dm", "kcal_kg_as_fed", "mcal_kg_dm", "usd_short_ton" |
+| unit_id | VARCHAR PK | "pct", "kcal_kg", "mcal_kg", "usd_short_ton", "fraction" |
 | measure | VARCHAR | "composition", "energy", "price", "mass", "inclusion" |
 | numerator | VARCHAR | optional structured metadata |
 | denominator | VARCHAR | optional structured metadata |
@@ -296,6 +601,13 @@ Unit conversion must be explicit and tested. The LP builder should normalize:
 - Prices to USD per kg feed ingredient, then report USD per short ton and/or metric tonne
 - Basis to as-fed for formulation unless the user explicitly requests dry-matter formulation
 
+Unit and basis rules:
+- `unit_id` describes the measurement scale only, e.g. `pct`, `kcal_kg`, `usd_short_ton`, `fraction`
+- `basis` describes what the measurement is expressed on, e.g. `as_fed`, `dry_matter`, `energy_density`, `contract`
+- Do not create unit IDs such as `pct_as_fed`, `kcal_kg_as_fed`, or `usd_short_ton_as_fed`
+- Any table with nutrient concentrations, prices, requirements, or inclusion values should expose `basis` as a normal filterable column
+- Errors and print methods should show both `unit_id` and `basis`
+
 #### `nutrient_values`
 Long-format nutrient composition table. One row per ingredient × nutrient × source record.
 
@@ -304,13 +616,17 @@ Long-format nutrient composition table. One row per ingredient × nutrient × so
 | value_id | VARCHAR PK | UUID |
 | ingredient_id | VARCHAR | FK → ingredients |
 | nutrient_id | VARCHAR | FK → nutrients |
-| value | DOUBLE | numeric value in `unit_id` |
+| nutrient_value | DOUBLE | numeric value in `unit_id` |
 | unit_id | VARCHAR | FK → units |
+| basis | VARCHAR | "as_fed", "dry_matter", "energy_density", etc. |
 | source_type | VARCHAR | "reference", "user_lab", "project_override", "calculated" |
 | source_id | VARCHAR | "NRC2012", "NASEM2022", "lab_oct2025", etc. |
 | batch_id | VARCHAR | import or seed batch identifier |
 | project_id | VARCHAR | optional project/client scope |
 | effective_date | DATE | date value becomes active |
+| row_origin | VARCHAR | "package_seed", "user", "import", "calculated" |
+| row_policy | VARCHAR | "protected", "append_only", "mutable", "archived" |
+| locked | BOOLEAN | true for rows users cannot modify through feedr |
 | archived_at | TIMESTAMP | NULL means active |
 | created_at | TIMESTAMP | |
 | updated_at | TIMESTAMP | |
@@ -328,11 +644,11 @@ Optional stochastic metadata for nutrient draws.
 | ingredient_id | VARCHAR | FK → ingredients |
 | nutrient_id | VARCHAR | FK → nutrients |
 | distribution | VARCHAR | "normal", "lognormal", "triangular", "empirical", "fixed" |
-| mean_value | DOUBLE | optional if tied to resolved nutrient value |
-| sd_value | DOUBLE | |
+| nutrient_mean | DOUBLE | optional if tied to resolved nutrient value |
+| nutrient_sd | DOUBLE | |
 | cv | DOUBLE | |
-| min_value | DOUBLE | |
-| max_value | DOUBLE | |
+| nutrient_min | DOUBLE | |
+| nutrient_max | DOUBLE | |
 | source_id | VARCHAR | literature/user source |
 | unit_id | VARCHAR | FK → units |
 
@@ -356,10 +672,14 @@ argument parser.
 | source_id | VARCHAR | provenance |
 | project_id | VARCHAR | optional project/client scope |
 | effective_date | DATE | |
+| row_origin | VARCHAR | "package_seed", "user", "import", "calculated" |
+| row_policy | VARCHAR | "protected", "append_only", "mutable", "archived" |
+| locked | BOOLEAN | true for rows users cannot modify through feedr |
 | archived_at | TIMESTAMP | |
 
-The formulation API can still expose convenient syntax like `constrain(corn_max = 0.65)`, but it
-should resolve to structured limit records internally.
+The formulation API should prefer explicit constraint tables over shorthand such as
+`constrain(corn_max = 0.65)`. Any shorthand that survives must resolve to structured limit records
+and must not become the primary API.
 
 #### `constraint_sets`
 Named sets of formulation constraints. Ingredient min/max bounds are not enough for real diet
@@ -387,7 +707,7 @@ One row per logical constraint. These compile into LP matrix rows.
 | constraint_type | VARCHAR | "ingredient_bound", "group_bound", "nutrient", "ratio", "fixed", "custom_linear" |
 | name | VARCHAR | e.g. "max_total_fat", "sid_met_lys_ratio" |
 | sense | VARCHAR | ">=", "<=", "=" |
-| rhs_value | DOUBLE | right-hand-side value after unit normalization |
+| constraint_rhs | DOUBLE | right-hand-side value after unit normalization |
 | unit_id | VARCHAR | FK → units |
 | basis | VARCHAR | "as_fed", "dry_matter", "energy_density", etc. |
 | hard | BOOLEAN | TRUE = required; FALSE = soft/penalized |
@@ -401,8 +721,8 @@ real nutrition work.
 | column | type | notes |
 |---|---|---|
 | constraint_id | VARCHAR | FK → constraints |
-| term_type | VARCHAR | "ingredient", "ingredient_tag", "nutrient", "constant" |
-| term_id | VARCHAR | ingredient_id, tag, nutrient_id, or NULL for constant |
+| term_type | VARCHAR | "ingredient_symbol", "ingredient_id", "ingredient_tag", "nutrient", "constant" |
+| term_id | VARCHAR | ingredient_symbol, ingredient_id, tag, nutrient_id, or NULL for constant |
 | coefficient | DOUBLE | multiplier in the LP row |
 | unit_id | VARCHAR | FK → units where needed |
 
@@ -429,14 +749,18 @@ constantly, may come from multiple locations/sources, and often require user agg
 | ingredient_id | VARCHAR | FK → ingredients |
 | price_date | DATE | |
 | price_value | DOUBLE | numeric value in `unit_id` |
-| unit_id | VARCHAR | FK → units, e.g. "usd_short_ton_as_fed" |
+| unit_id | VARCHAR | FK → units, e.g. "usd_short_ton" |
+| basis | VARCHAR | "as_fed", "dry_matter", "contract", etc. |
 | source_type | VARCHAR | "futures", "ams_weekly", "user", "internal_projection" |
 | source_id | VARCHAR | "cbot", "usda_ams", "smith_farms_projection" |
 | contract_month | VARCHAR | "2025-12" for futures |
 | location | VARCHAR | "Chicago", "Omaha", etc. |
-| basis_value | DOUBLE | optional local basis in `basis_unit_id` |
-| basis_unit_id | VARCHAR | FK → units |
+| market_basis_value | DOUBLE | optional local market basis in `market_basis_unit_id` |
+| market_basis_unit_id | VARCHAR | FK → units |
 | aggregation_method | VARCHAR | "spot", "mean_30d", "weighted_projection", etc. |
+| row_origin | VARCHAR | "package_seed", "user", "import", "calculated" |
+| row_policy | VARCHAR | "protected", "append_only", "mutable", "archived" |
+| locked | BOOLEAN | true for rows users cannot modify through feedr |
 | created_at | TIMESTAMP | |
 
 Users should be able to store raw daily prices, rolling means, futures-derived projections, and
@@ -474,9 +798,9 @@ directly into `diet_spec()` after filtering.
 | production_class | VARCHAR | "nursery", "grower", "finisher", "sow" |
 | phase | VARCHAR | optional |
 | nutrient_id | VARCHAR | FK → nutrients |
-| min_value | DOUBLE | constraint lower bound (NULL = none) |
-| max_value | DOUBLE | constraint upper bound (NULL = none) |
-| target_value | DOUBLE | for soft constraint / penalty approaches |
+| requirement_min | DOUBLE | constraint lower bound (NULL = none) |
+| requirement_max | DOUBLE | constraint upper bound (NULL = none) |
+| requirement_target | DOUBLE | for soft constraint / penalty approaches |
 | unit_id | VARCHAR | FK → units |
 | basis | VARCHAR | "as_fed" or "dry_matter" |
 | source | VARCHAR | e.g. "NRC2012", "NASEM2022", "user_defined" |
@@ -557,11 +881,12 @@ fetch_futures_curve(feedr, commodity = "corn", months = 12)   # full forward cur
 update_prices(feedr)   # refresh all configured sources
 
 # User-controlled reproducible price scenario
-create_price_scenario(
-  feedr,
-  scenario_id = "q4_projection",
-  prices = prices(feedr) |> filter(price_date >= as.Date("2025-10-01"))
-)
+q4_projection <- feedr |>
+  get_table("prices") |>
+  filter(price_date >= as.Date("2025-10-01")) |>
+  price_scenario(scenario_id = "q4_projection", unit = "usd_short_ton", basis = "as_fed")
+
+save_price_scenario(feedr, q4_projection)
 ```
 
 Price APIs should import observations, not silently decide what the formulation price is. Users need
@@ -644,49 +969,152 @@ for the matrix-heavy LP structure diet formulation requires.
 ## Pipe-First API Design
 
 The pipe (`|>` or `%>%`) is the right mental model here. The entry point is a `feedr_session`, then
-resolved ingredient/nutrient views, then standard dplyr/dbplyr filtering, then feedr verbs.
+`get_table()` selects a lazy DuckDB table, then standard dplyr/dbplyr filtering narrows the data,
+then feedr verbs consume the selected rows.
 
 ```r
 library(feedr)
 
-# Full canonical pattern: session → ingredients → filter → prices → formulate → solve
+# Full canonical pattern: session -> table -> filter -> prices -> formulate -> solve
 feedr <- init_feedr_db("~/feedr/swine.db")
 
 feedr |>
-  ingredients_resolved(species = "swine", reference_system = "NASEM2022") |>
-  filter(ingredient_id %in% c("corn_yellow_dent_2", "soymeal_48", "choice_white_grease",
-                               "monocalcium_phosphate", "limestone")) |>
-  set_price_scenario("today_spot") |>
-  formulate_diet(spec = "grower_standard") |>
-  constrain(corn_max = 0.65, soymeal_48_max = 0.30) |>
+  get_table("ingredients") |>
+  filter(
+    species == "swine",
+    reference_system == "NASEM2022",
+    ingredient_symbol %in% c("CYD2", "SBM48", "CWG", "MCP", "LIME")
+  ) |>
+  formulate_diet(
+    spec = "grower_standard",
+    prices = "today_spot",
+    constraints = grower_limits
+  ) |>
   solve_diet()
 
 # filter() is plain dplyr, but prices remain a separate resolved scenario
 feedr |>
-  ingredients_resolved(species = "swine") |>
-  filter(nutrient_id == "me_swine", value > 3000) |>
-  set_price_scenario("q4_projection") |>
-  formulate_diet(spec = "nursery_phase2") |>
+  get_table("ingredients") |>
+  filter(species == "swine", nutrient_id == "me_swine", nutrient_value > 3000) |>
+  formulate_diet(spec = "nursery_phase2", prices = "q4_projection") |>
   solve_diet()
 
 # Compare ingredient sets via the pipe
 list(
-  corn_soy = feedr |> ingredients_resolved(species = "swine") |> filter_tag("corn_soy_base"),
-  ddgs_sub = feedr |> ingredients_resolved(species = "swine") |> filter_tag(c("corn_soy_base", "ddgs"))
+  corn_soy = feedr |>
+    get_table("ingredients") |>
+    filter(species == "swine", ingredient_group == "corn_soy_base"),
+  ddgs_sub = feedr |>
+    get_table("ingredients") |>
+    filter(species == "swine", ingredient_group %in% c("corn_soy_base", "ddgs"))
 ) |>
   compare_diets(spec = "grower_standard")
 ```
 
-Resolved accessors return `tbl()` objects (dbplyr lazy tables) — all `dplyr` verbs (`filter`,
-`select`, `mutate`, `arrange`) work on them and push down to DuckDB. When `formulate_diet()`
-receives a resolved ingredient set, it calls `collect()` internally to pull the nutrient matrix and
-selected price scenario into R for LP construction.
+### Multi-table input pattern
+
+Many feedr workflows need more than one filtered table. The pipe should carry the primary table for
+the task, while additional filtered tables are passed through clear named arguments. This avoids
+special helper functions while still making multi-table workflows readable.
+
+```r
+ingredients <- feedr |>
+  get_table("ingredients") |>
+  filter(
+    species == "swine",
+    production_class == "nursery",
+    available == TRUE
+  )
+
+prices <- feedr |>
+  get_table("prices") |>
+  semi_join(ingredients |> select(ingredient_symbol), by = "ingredient_symbol") |>
+  filter(
+    market == "central_iowa",
+    price_date == max(price_date)
+  ) |>
+  price_scenario(
+    scenario_id = "central_iowa_latest",
+    unit = "usd_short_ton",
+    basis = "as_fed",
+    source = "market_observed"
+  )
+
+requirements <- feedr |>
+  get_table("requirement_equations") |>
+  filter(source == "NASEM2022", species == "swine", production_class == "nursery") |>
+  calculate_requirements(animal = pig) |>
+  diet_spec(basis = "as_fed")
+
+ingredients |>
+  formulate_diet(
+    spec = requirements,
+    prices = prices,
+    constraints = nursery_limits
+  ) |>
+  solve_diet()
+```
+
+The same pattern should work when the second input comes from a different table or user file:
+
+```r
+ingredient_candidates <- feedr |>
+  get_table("ingredients") |>
+  filter(species == "swine", ingredient_group %in% c("corn_soy_base", "minerals"))
+
+five_year_prices <- feedr |>
+  get_table("prices") |>
+  semi_join(ingredient_candidates |> select(ingredient_symbol), by = "ingredient_symbol") |>
+  filter(
+    market == "central_iowa",
+    price_date >= Sys.Date() - lubridate::years(5)
+  )
+
+ingredient_candidates |>
+  formulate_diet(
+    spec = grower_spec,
+    prices = five_year_prices,
+    price_policy = list(method = "mean", by = "ingredient_symbol"),
+    constraints = grower_limits
+  ) |>
+  solve_diet()
+```
+
+Rules:
+- The piped object is the main data being transformed; secondary data uses named arguments.
+- Secondary inputs should accept tibbles, data frames, lazy dbplyr tables, or saved scenario IDs where practical.
+- If an argument can accept multiple input shapes, the argument name must still describe the concept, e.g. `prices`, not `data` or `x`.
+- Functions must validate required columns for each input and explain missing columns clearly.
+- Do not hide second-table filtering inside a helper such as `latest_prices()` unless it adds substantial domain validation.
+
+`get_table()` returns a `tbl()` object (a dbplyr lazy table) — all `dplyr` verbs (`filter`,
+`select`, `mutate`, `arrange`) work on it and push down to DuckDB. When `formulate_diet()`
+receives a selected ingredient set, it calls `collect()` internally to pull the nutrient matrix and
+selected price scenario into R for LP construction. Do not create one wrapper function per table
+unless the wrapper adds real domain behavior beyond `get_table(feedr, "table_name")`.
 
 Different feedr functions accept different table inputs:
-- `formulate_diet()` / `solve_diet()` — expects a resolved ingredient/nutrient set plus price scenario
-- `evaluate_diet()` — expects a formulation result + optional spec
-- `simulate_growth()` — can accept either ingredient table or a pre-solved `feedr_result`
-- `compare_diets()` — expects a named list of ingredient tables or `feedr_result` objects
+- `formulate_diet()` — accepts `ingredients`, `spec`, `prices`, `constraints`, and optional `animal`
+- `solve_diet()` — accepts a `problem` produced by `formulate_diet()`
+- `evaluate_diet()` — accepts a fixed `diet`, optional `spec`, and optional `prices`
+- `simulate_growth()` — accepts either selected `ingredients` or a pre-solved `result`
+- `compare_diets()` — accepts a named list of selected ingredient tables, problems, or results
+
+Function contracts should be obvious from argument names:
+
+| function | first input | key arguments | returns |
+|---|---|---|---|
+| `get_table()` | `feedr` | `name` | lazy table |
+| `mutate_table()` | selected table | `...`, `.rows`, `.mode`, `.by`, `.defaults`, `.reason` | write result / changed rows |
+| `calculate_requirements()` | `equations` | `animal` | requirement-value table |
+| `diet_spec()` | `requirements` | `species`, `production_class`, `basis`, `source` | `feedr_diet_spec` |
+| `price_scenario()` | `prices` | `scenario_id`, `unit`, `source`, `effective_date` | price scenario table/object |
+| `constraint_set()` | `constraints` | `set_id`, `unit`, `source` | constraint table/object |
+| `formulate_diet()` | `ingredients` | `spec`, `prices`, `constraints`, `animal`, `price_policy` | `feedr_problem` |
+| `formulate_stochastic()` | `ingredients` | `spec`, `prices`, `constraints`, `price_distribution`, `nutrient_uncertainty`, `n_scenarios` | stochastic result |
+| `solve_diet()` | `problem` | `solver`, `control` | `feedr_result` |
+| `evaluate_diet()` | `diet` | `spec`, `prices`, `ingredients` | evaluation table/object |
+| `compare_diets()` | `diets` | `spec`, `prices`, `metrics` | comparison table |
 
 ### Naming conventions
 
@@ -701,6 +1129,8 @@ Rules:
   `price_scenario()`, `constraint_set()`
 - Use verbs for transformations and actions: `get_table()`, `calculate_requirements()`,
   `validate_problem()`, `formulate_diet()`, `solve_diet()`, `explain_solution()`
+- Do not create table-specific noun accessors such as `ingredients()`, `prices()`, or
+  `nutrient_values()` when `feedr |> get_table("...")` provides the same behavior
 - Source names belong in data columns and `filter()` calls, not in function names
 - Species names belong in data columns and `filter()` calls, not in function names
 - Do not create source/species-specific functions such as `nasem_swine()`, `nrc_swine()`,
@@ -716,7 +1146,11 @@ perform the operation.
 # Preferred: source and species are selected in data
 feedr |>
   get_table("requirement_equations") |>
-  filter(source == "NASEM2022", species == "swine", production_class == "nursery") |>
+  filter(
+    source == "NASEM2022", 
+    species == "swine", 
+    production_class == "nursery"
+  ) |>
   calculate_requirements(animal = pig) |>
   diet_spec(basis = "as_fed")
 
@@ -729,8 +1163,8 @@ diet_spec_nasem(pig)
 ### Pipe-friendly design principles
 
 - Every function returns the same class (e.g., `feedr_problem` or `feedr_result`) so the pipe flows
-- Accessors like `ingredients_resolved()`, `prices()`, and `nutrient_values()` wrap `dplyr::tbl()` with a feedr class tag so downstream verbs know the source
-- `filter_*()` helper functions are convenience wrappers over common `filter()` patterns for users less familiar with dplyr
+- `get_table(feedr, name)` / `feedr |> get_table(name)` is the standard table accessor and may attach a feedr class tag so downstream verbs know the source
+- Prefer plain `dplyr` verbs for row selection; do not add `filter_*()` wrappers unless they perform real domain validation or transformation
 - `solve_diet()` is the terminal verb that triggers LP solve and returns a `feedr_result`
 - `evaluate_diet()` takes a fixed inclusion vector and checks it against specs — no LP needed
 - The `feedr_problem` object stores: ingredient set, nutrient matrix, normalized price vector, constraints, unit conversions, and provenance hashes
@@ -784,12 +1218,12 @@ from CSV/Excel. `diet_spec()` should not care how the requirement values were pr
 ```r
 # Manual spec entered by a nutritionist
 spec <- tribble(
-  ~nutrient_id, ~min, ~max, ~unit,
-  "ne_swine",  2450, NA,   "kcal_kg_as_fed",
-  "sid_lys",   0.95, NA,   "pct_as_fed",
-  "sttd_p",    0.33, NA,   "pct_as_fed",
-  "ca",        0.58, 0.90, "pct_as_fed",
-  "na",        0.18, 0.25, "pct_as_fed"
+  ~nutrient_id, ~requirement_min, ~requirement_max, ~unit,    ~basis,
+  "ne_swine",  2450,             NA,               "kcal_kg", "as_fed",
+  "sid_lys",   0.95,             NA,               "pct",     "as_fed",
+  "sttd_p",    0.33,             NA,               "pct",     "as_fed",
+  "ca",        0.58,             0.90,             "pct",     "as_fed",
+  "na",        0.18,             0.25,             "pct",     "as_fed"
 ) |>
   diet_spec(
     species = "swine",
@@ -817,9 +1251,9 @@ All valid paths converge to the same shape:
 ```r
 # manual table, imported file, database values, or calculated equations
 requirements <- tribble(
-  ~nutrient_id, ~min, ~max, ~unit,
-  "ne_swine",  2450, NA,   "kcal_kg_as_fed",
-  "sid_lys",   0.95, NA,   "pct_as_fed"
+  ~nutrient_id, ~requirement_min, ~requirement_max, ~unit,    ~basis,
+  "ne_swine",  2450,             NA,               "kcal_kg", "as_fed",
+  "sid_lys",   0.95,             NA,               "pct",     "as_fed"
 )
 
 spec <- requirements |>
@@ -843,53 +1277,91 @@ Rules:
 ### Price scenarios
 
 Users must be able to enter prices manually, import daily prices, aggregate historical prices, or use
-internal projections. The formulation should use a named scenario.
+internal projections. Price data are a separate table input from ingredients. Deterministic formulation
+can use a saved scenario ID, a one-row-per-ingredient price table, or a filtered historical price table
+that is reduced with an explicit `price_policy`. Stochastic formulation can use the full filtered price
+history or a table of distribution parameters.
 
 ```r
-prices <- price_scenario(
-  feedr,
-  scenario_id = "today_manual",
-  unit = "usd_short_ton_as_fed",
-  prices = tribble(
-    ~ingredient_id,             ~price,
-    "corn_yellow_dent_2",       205,
-    "soymeal_48",               410,
-    "choice_white_grease",      760,
-    "monocalcium_phosphate",    980,
-    "limestone",                95,
-    "salt",                     140
-  )
+prices <- tribble(
+  ~ingredient_symbol, ~price,
+  "CYD2",             205,
+  "SBM48",            410,
+  "CWG",              760,
+  "MCP",              980,
+  "LIME",             95,
+  "SALT",             140
+) |>
+  price_scenario(
+    scenario_id = "today_manual",
+    unit = "usd_short_ton",
+    basis = "as_fed",
+    source = "user_defined"
 )
 ```
 
+Users can also pass filtered historical prices directly:
+
+```r
+mean_prices <- feedr |>
+  get_table("prices") |>
+  filter(
+    market == "central_iowa",
+    price_date >= as.Date("2021-01-01"),
+    price_date <= as.Date("2025-12-31")
+  )
+
+ingredients |>
+  formulate_diet(
+    spec = grower_spec,
+    prices = mean_prices,
+    price_policy = list(method = "mean", by = "ingredient_symbol")
+  ) |>
+  solve_diet()
+```
+
+The same filtered price table can be passed to stochastic formulation without collapsing it first:
+
+```r
+ingredients |>
+  formulate_stochastic(
+    spec = grower_spec,
+    prices = mean_prices,
+    price_distribution = list(method = "empirical", by = "ingredient_symbol"),
+    n_scenarios = 10000
+  )
+```
+
 Rules:
-- `price_scenario()` should require one resolved price per selected ingredient
-- Aggregation helpers can create scenarios from `prices`, e.g. mean 30-day, weighted projection, or user forecast
+- `price_scenario()` should require one resolved price per selected ingredient unless its purpose is explicitly to store a distribution scenario
+- `formulate_diet()` should require one resolved deterministic price per selected ingredient after applying `price_policy`
+- `formulate_stochastic()` may accept many price rows per ingredient and draw from the filtered empirical history or specified distribution
+- Generalized verbs can create scenarios from filtered `prices` tables, e.g. mean 30-day, five-year mean, weighted projection, or user forecast
+- If multiple rows per ingredient are passed to a deterministic solve without `price_policy`, fail with a clear error
 - Solver internals use USD/kg; reports can show USD/short ton, USD/metric tonne, and cost/head if intake is known
 
 ### Constraint builder
 
-`constrain()` can remain ergonomic, but there must also be explicit functions for arbitrary linear
-constraints.
+Constraints should be table-first. Users can type a small tibble, import a spreadsheet, query
+`get_table("constraints")` / `get_table("constraint_terms")`, or build rows interactively, then pass
+the result to `constraint_set()`. Avoid a family of narrow `add_*_constraint()` helpers unless a helper
+adds validation that cannot be expressed clearly in the constraint table.
 
 ```r
-limits <- constraint_set("grower_practical_limits") |>
-  add_ingredient_bound("corn_yellow_dent_2", max = 0.65, unit = "fraction_as_fed") |>
-  add_ingredient_bound("soymeal_48", max = 0.30, unit = "fraction_as_fed") |>
-  add_fixed_inclusion("vitamin_trace_mineral_premix", value = 0.0025, unit = "fraction_as_fed") |>
-  add_group_bound(tag = "added_fat", max = 0.05, unit = "fraction_as_fed") |>
-  add_ratio_constraint(numerator = "sid_met", denominator = "sid_lys", min = 0.30) |>
-  add_ratio_constraint(numerator = "sid_thr", denominator = "sid_lys", min = 0.62) |>
-  add_custom_constraint(
-    name = "total_high_fiber_ingredients",
-    terms = c("ddgs" = 1, "wheat_midds" = 1),
-    max = 0.25,
-    unit = "fraction_as_fed"
-  )
+limits <- tribble(
+  ~constraint_id, ~term_type,          ~term_id,          ~coefficient, ~constraint_min, ~constraint_max, ~unit,     ~basis,
+  "corn_max",     "ingredient_symbol", "CYD2",            1,            NA,              0.65,            "fraction", "as_fed",
+  "soy_max",      "ingredient_symbol", "SBM48",           1,            NA,              0.30,            "fraction", "as_fed",
+  "premix_fixed", "ingredient_symbol", "VTM",             1,            0.0025,          0.0025,          "fraction", "as_fed",
+  "fat_max",      "ingredient_group",  "added_fat",       1,            NA,              0.05,            "fraction", "as_fed",
+  "met_lys_min",  "nutrient_ratio",    "sid_met:sid_lys", 1,            0.30,            NA,              "ratio",    "as_fed",
+  "fiber_max",    "ingredient_group",  "high_fiber",      1,            NA,              0.25,            "fraction", "as_fed"
+) |>
+  constraint_set(set_id = "grower_practical_limits")
 ```
 
 Rules:
-- The explicit constraint API should compile to `constraints` + `constraint_terms`
+- `constraint_set()` should accept a table with clear columns and compile to `constraints` + `constraint_terms`
 - Ratio constraints must be converted to linear form before solving, e.g. `sid_met - 0.30 * sid_lys >= 0`
 - Group/tag constraints should expand to ingredient terms at problem-build time
 - Bounds, fixed inclusions, and custom linear constraints should all appear in result diagnostics
@@ -916,8 +1388,9 @@ spec <- diet_spec(
 )
 
 ingredient_set <- feedr |>
-  ingredients_resolved(species = "swine", reference_system = "user_preferred") |>
-  filter_tag(c("corn_soy_base", "minerals", "premix"))
+  get_table("ingredients") |>
+  filter(species == "swine", reference_system == "user_preferred") |>
+  filter(ingredient_group %in% c("corn_soy_base", "minerals", "premix"))
 
 problem <- formulate_diet(
   ingredients = ingredient_set,
@@ -937,7 +1410,7 @@ Nutritionists need usable result inspection, not just a solver status.
 
 Required functions:
 - `as_tibble(result, "ingredients")` — inclusion, price used, cost contribution
-- `as_tibble(result, "nutrients")` — achieved nutrients vs min/max/target
+- `as_tibble(result, "nutrients")` — achieved nutrients vs `requirement_min` / `requirement_max` / `requirement_target`
 - `binding_constraints(result)` — constraints active at optimum
 - `shadow_prices(result)` — marginal values when available from solver
 - `explain_solution(result)` — concise summary of cost, feasibility, binding constraints, warnings
@@ -968,7 +1441,7 @@ plausible-looking but wrong diet formulations.
 - Constraint terms that reference unknown ingredients, tags, nutrients, or units
 - Ratio constraints with missing numerator/denominator nutrients or denominator values that can be zero
 - Animal profiles missing fields required by the selected requirement equation
-- Manual requirements that specify neither `min`, `max`, nor `target`
+- Manual requirements that specify none of `requirement_min`, `requirement_max`, or `requirement_target`
 - Infeasible LP problems, with the nearest explanation available: impossible bounds, missing nutrients, or conflicting constraints
 - Stale price data when `price_date` is older than a user-defined threshold
 - User lab imports that overwrite or supersede existing active values
@@ -980,25 +1453,26 @@ solve_diet(problem)
 #> Error:
 #> Cannot formulate diet because 2 selected ingredients are missing required nutrient `sid_lys`.
 #> Missing values:
-#> - choice_white_grease: sid_lys
-#> - limestone: sid_lys
+#> - CWG: sid_lys
+#> - LIME: sid_lys
 #> Suggested fixes:
 #> - mark `sid_lys` as zero for non-protein ingredients, or
 #> - remove these ingredients from constraints requiring `sid_lys`.
 ```
 
 ```r
-set_price_scenario(problem, "today_spot")
+formulate_diet(ingredients, spec = grower_spec, prices = "today_spot")
 #> Warning:
-#> Price scenario `today_spot` has no price for `monocalcium_phosphate`.
+#> Price scenario `today_spot` has no price for `MCP`.
 #> Formulation will not run until every selected ingredient has a resolved price.
 ```
 
 ```r
-add_ratio_constraint(limits, numerator = "sid_met", denominator = "sid_lys", min = 0.30)
+constraint_set(limits)
 #> Error:
-#> Cannot add ratio constraint because nutrient `sid_met` is not present in the selected
-#> ingredient set. Add `sid_met` values, select a different nutrient, or remove this constraint.
+#> Cannot build constraint set because ratio constraint `met_lys_min` references
+#> nutrient `sid_met`, which is not present in the selected ingredient set.
+#> Add `sid_met` values, select a different nutrient, or remove this constraint row.
 ```
 
 ---
@@ -1020,7 +1494,52 @@ or may fail nutrient specs if ingredient quality varies. Stochastic formulation 
 
 Two modes for uncertainty input — user's choice:
 
-**Mode 1: User-specified distributions**
+**Mode 1: Filtered empirical price history**
+```r
+ingredients <- feedr |>
+  get_table("ingredients") |>
+  filter(species == "swine", production_class == "grower", available == TRUE)
+
+historical_prices <- feedr |>
+  get_table("prices") |>
+  semi_join(ingredients |> select(ingredient_symbol), by = "ingredient_symbol") |>
+  filter(
+    market == "central_iowa",
+    price_date >= Sys.Date() - lubridate::years(5)
+  )
+
+ingredients |>
+  formulate_stochastic(
+    spec = "grower_standard",
+    prices = historical_prices,
+    price_distribution = list(method = "empirical", by = "ingredient_symbol"),
+    n_scenarios = 10000,
+    parallel = TRUE,
+    workers = 8
+  )
+```
+
+**Mode 2: User-specified distributions**
+```r
+ingredients |>
+  formulate_stochastic(
+    spec = "grower_standard",
+    prices = tribble(
+      ~ingredient_symbol, ~distribution, ~mean, ~sd, ~unit,          ~basis,
+      "CYD2",             "lognormal",   220,   30,  "usd_short_ton", "as_fed",
+      "SBM48",            "lognormal",   480,   60,  "usd_short_ton", "as_fed"
+    ),
+    nutrient_uncertainty = tribble(
+      ~ingredient_symbol, ~nutrient_id, ~distribution, ~mean, ~cv,   ~unit,    ~basis,
+      "CYD2",             "me_swine",   "normal",      3386,  0.03,  "kcal_kg", "as_fed",
+      "SBM48",            "sid_lys",    "normal",      2.89,  0.02,  "pct",     "as_fed"
+    ),
+    price_correlation = price_correlations,
+    n_scenarios = 10000
+  )
+```
+
+**Avoid as the primary API: nested lists that hide table shape**
 ```r
 formulate_stochastic(
   spec        = "grower_standard",
@@ -1038,19 +1557,22 @@ formulate_stochastic(
   workers  = 8
 )
 ```
+Nested lists may be accepted for quick interactive work, but table inputs are preferred because users
+can filter, join, inspect, import, and save them consistently.
 
-**Mode 2: Futures-projected scenarios**
+**Mode 3: Futures-projected scenarios**
 ```r
-formulate_stochastic(
-  spec = "finisher_standard",
-  scenarios_from = futures_projected_prices(
-    feedr,
-    commodities = c("corn", "soymeal"),
-    horizon_days = 90,
-    volatility = "user_supplied"
-  ),
-  n_scenarios = 10000
-)
+ingredients |>
+  formulate_stochastic(
+    spec = "finisher_standard",
+    prices = futures_projected_prices(
+      feedr,
+      commodities = c("corn", "soymeal"),
+      horizon_days = 90,
+      volatility = "user_supplied"
+    ),
+    n_scenarios = 10000
+  )
 ```
 This uses futures prices as the forward price anchor, then applies explicitly supplied volatility and
 correlation assumptions. Do not call this market-implied unless the package has actual options-implied
@@ -1131,7 +1653,7 @@ spec <- feedr |>
 ```
 
 `calculate_requirements()` returns a plain tibble with the same columns expected by `diet_spec()`
-(`nutrient_id`, `min`, `max`, optional `target`, `unit`, plus provenance columns such as `source`,
+(`nutrient_id`, `requirement_min`, `requirement_max`, optional `requirement_target`, `unit`, plus provenance columns such as `source`,
 `equation_id`, `assumption_id`, and `basis` when available). This keeps every intermediate object
 inspectable and auditable before formulation.
 
@@ -1217,12 +1739,13 @@ compare_prices(
 
 The pipe enables a nice pattern for this:
 ```r
-ingredients() |>
-  filter_source("NASEM2022") |>
+feedr |>
+  get_table("ingredients") |>
+  filter(source == "NASEM2022") |>
   {function(ing) list(
-    corn_soy    = ing |> filter_tag("corn_soy_base"),
-    distillers  = ing |> filter_tag("ddgs_base"),
-    wheat_based = ing |> filter_tag("wheat_base")
+    corn_soy    = ing |> filter(ingredient_group == "corn_soy_base"),
+    distillers  = ing |> filter(ingredient_group == "ddgs_base"),
+    wheat_based = ing |> filter(ingredient_group == "wheat_base")
   )}() |>
   map(~ formulate_diet(.x, spec = "grower_standard")) |>
   compare_diets()
@@ -1230,25 +1753,30 @@ ingredients() |>
 
 ---
 
-## Custom / Lab-Analyzed Ingredient Values
+## Custom / Lab-Analyzed Table Values
 
 Users routinely have their own lab analyses that differ from NRC book values.
 
 ```r
-# Override NRC values with user's lab analysis
-update_ingredient(
-  feedr,
-  "corn_yellow_dent_2",
-  source_type = "user_lab",
-  source_id = "user_lab_q4_2025",
-  me_swine_kcal_kg = 3320,    # lab value lower than reference
-  cp_pct_as_fed = 8.1,
-  sid_lys_pct_as_fed = 0.20
-)
-
-# Or batch update from a CSV of lab results
-import_lab_results(feedr, "lab_analysis_oct2025.csv", batch_id = "user_lab_oct2025")
+# Add lab analysis rows without modifying protected reference rows
+feedr |>
+  get_table("nutrient_values") |>
+  mutate_table(
+    .rows = readr::read_csv("lab_analysis_oct2025.csv"),
+    .mode = "insert",
+    .defaults = list(
+      source_type = "user_lab",
+      source_id = "user_lab_q4_2025",
+      batch_id = "user_lab_oct2025",
+      row_origin = "user",
+      row_policy = "append_only",
+      locked = FALSE
+    )
+  )
 ```
+
+Specialized helpers such as `import_lab_results()` can be added later, but they should wrap
+`mutate_table()` rather than introduce a separate write path.
 
 ---
 
@@ -1257,8 +1785,10 @@ import_lab_results(feedr, "lab_analysis_oct2025.csv", batch_id = "user_lab_oct20
 ```
 feedr/
 ├── R/
-│   ├── db.R                  # DuckDB connection, on-attach init, schema migrations
-│   ├── ingredients.R         # ingredients(), filter_ingredients(), update_ingredient()
+│   ├── db.R                  # DuckDB connection, explicit init, schema migrations
+│   ├── tables.R              # get_table(), table validation, lazy tbl tagging
+│   ├── mutate.R              # mutate_table(), row policies, audit writes, schema extension
+│   ├── ingredients.R         # ingredient-specific helpers only after generic APIs are stable
 │   ├── prices.R              # fetch_cbot_prices(), fetch_usda_ams(), update_prices()
 │   ├── requirements.R        # calculate_requirements(), diet_spec()
 │   ├── formulate.R           # formulate_diet(), solve_diet(), build_lp()
@@ -1267,7 +1797,7 @@ feedr/
 │   ├── simulate.R            # simulate_growth()
 │   ├── optimize.R            # optimize_profit()
 │   ├── compare.R             # compare_diets(), compare_sources()
-│   ├── import_export.R       # import_lab_results(), export_formulation()
+│   ├── import_export.R       # generic CSV/Excel import helpers, export_formulation()
 │   └── plot.R                # plot methods for feedr_result, feedr_stochastic
 ├── data-raw/
 │   ├── example_swine_ingredients.csv          # synthetic or redistributable test data
@@ -1301,7 +1831,13 @@ feedr/
 | 9 | Requirement input? | **Table-first values and equations.** `diet_spec()` is the only final requirement-spec constructor. Manual tables, imported CSV/Excel tables, and database requirement rows pipe directly into `diet_spec()`. Equation rows first pipe through `calculate_requirements()`, which returns the same requirement-value table shape expected by `diet_spec()`. Source and species names live in table columns and `filter()` calls, not function names. |
 | 10 | Animal context? | **Use explicit `animal_profile()`.** Capture species, production class, age/weight, intake, gain, sex, and assumptions used to generate or interpret requirements. |
 | 11 | Naming convention? | **Operation-based function names, table-based source selection.** Do not create source/species-specific functions like `nasem_swine()` or `nrc_swine()`. They limit both source and species in the API and do not scale. |
-| 12 | Hosting and CI? | **GitHub + GitHub Actions, tested on macOS, Linux, and Windows.** Cross-platform package checks are required so feedr does not accidentally depend on Apple-only paths, shell behavior, or system tooling. |
+| 12 | API shape? | **Generalized table-in, table-out verbs.** Users should filter any relevant table with dplyr, then pass the result to a small set of clear verbs. Avoid table-specific accessors and helper functions that only wrap `get_table()` or `filter()`. |
+| 13 | Ingredient shorthand? | **Use ticker-like `ingredient_symbol` values for user-facing code.** Keep `ingredient_id` as the stable internal key, but expose symbols such as `CYD2`, `SBM48`, `DDGS`, `MCP`, and `LIME` in `get_table()` outputs, examples, errors, and result tables. |
+| 14 | Table writes? | **Use `mutate_table()` as the v1 write primitive.** It handles insert, upsert/update where allowed, archive, and schema extension across supported tables. Domain wrappers such as `update_ingredient()` or `import_lab_results()` can come later and must wrap the generic path. |
+| 15 | Immutable rows? | **Yes, through feedr row policies.** Protected package seed/reference rows cannot be modified by normal `mutate_table()` calls; users add override rows instead. This is API-level protection, not a tamper-proof guarantee if someone edits the DuckDB file directly. |
+| 16 | Column naming? | **Use meaningful, table-specific value names.** Avoid bare `value`, `min`, `max`, and `target` columns in user-facing tables. Prefer `nutrient_value`, `price_value`, `requirement_min`, `constraint_max`, etc., so collected/joined tables remain readable. |
+| 17 | Unit/basis design? | **Keep measurement units and basis separate.** `unit_id` is scale only (`pct`, `kcal_kg`, `usd_short_ton`); `basis` is a normal filterable column (`as_fed`, `dry_matter`, `energy_density`, `contract`). Do not encode basis in unit names. |
+| 18 | Hosting and CI? | **GitHub + GitHub Actions, tested on macOS, Linux, and Windows.** Cross-platform package checks are required so feedr does not accidentally depend on Apple-only paths, shell behavior, or system tooling. |
 
 ## Open Questions (still to decide)
 
@@ -1310,7 +1846,7 @@ feedr/
 1. **Nutrient variability storage:** Store per-ingredient CV or SD for each nutrient? This is the backbone of stochastic nutrient draws. Source options: user-supplied, legally redistributable published CVs, or zero-variance default.
 2. **Long-format pivot strategy:** The LP constraint matrix is nutrients × ingredients (wide). Profile whether `tidyr::pivot_wider()` + `collect()` is fast enough for 500-ingredient databases, or whether we need a DuckDB PIVOT query.
 3. **Reference data licensing:** Which exact NRC/NASEM values or equations, if any, can be redistributed in the package?
-4. **Audit implementation:** Use append-only `nutrient_values` plus `archived_at`, and decide whether a separate `audit_log` table is needed for every user-facing write.
+4. **Audit detail level:** `audit_log` is required for `mutate_table()` writes. Decide how much before/after row detail to store for bulk imports without making the database too large.
 
 ### Solver
 
@@ -1326,7 +1862,7 @@ feedr/
 
 9. **`plot()` as terminal verb or return data?** Lean toward returning data (tibbles, lists) so users can pipe into their own ggplot2 — more composable. Ship `autoplot()` methods as convenience wrappers.
 10. **Interactive ingredient browser:** A `feedr_gadget()` Shiny widget for exploring the DB and building ingredient sets. Mark as Phase 2 — but design resolved accessor outputs so selections can return to console for scripting.
-11. **Constraint UI ergonomics:** How much shorthand should `constrain()` support before users should switch to explicit `add_*_constraint()` helpers?
+11. **Constraint UI ergonomics:** How much shorthand should `constrain()` support before users should switch to explicit constraint tables? Avoid a growing family of `add_*_constraint()` helpers unless a specific helper adds substantial validation or transformation.
 12. **Infeasibility explanation depth:** Decide how much automatic diagnosis is feasible in MVP versus reporting solver status plus structured pre-solve validation.
 
 ---

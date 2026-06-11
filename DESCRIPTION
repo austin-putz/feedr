@@ -5,7 +5,7 @@ Authors@R:
     person("Austin", "Putz", email = "austin@putz.io", role = c("aut", "cre"))
 Description: Open-source least-cost diet formulation for livestock nutritionists
     and researchers. Pipe-first API with a DuckDB backend.
-License: MIT + file LICENSE
+License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2

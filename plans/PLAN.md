@@ -21,7 +21,10 @@ feedr <- init_feedr_db()
 
 feedr |>
   get_table("ingredients") |>
-  filter(species == "swine", ingredient_group == "nursery") |>
+    filter(
+      species == "swine", 
+      ingredient_group == "nursery"
+    ) |>
   formulate_diet(spec = nursery_spec, prices = nursery_prices)
 ```
 
@@ -67,7 +70,7 @@ Core design rules:
 
 ## Project Operations Goal
 
-feedr should be developed as a GitHub-hosted open-source package with GitHub Actions as the default
+`feedr` should be developed as a GitHub-hosted open-source package with GitHub Actions as the default
 continuous integration system. The project should treat cross-platform compatibility as a core quality
 bar: code, tests, examples, and vignettes must work on macOS, Linux, and Windows unless a limitation is
 explicitly documented and justified.
@@ -203,6 +206,7 @@ or project `ingredient_symbol` for users.
 | corn_yellow_dent_2 | CYD2 | sid_lys | 0.21 | pct | as_fed | user_lab | lab_oct2025 | 2025-10-15 |
 
 A resolved view should apply explicit precedence at query time:
+
 - Project/client overrides win over global user lab values
 - User lab values win over reference values
 - Newer effective dates win within the same precedence level
@@ -231,6 +235,7 @@ Users normally do not think about the layering; advanced users can inspect raw r
 provenance.
 
 Key rules:
+
 - Package updates only INSERT reference rows into explicitly versioned seed batches — user rows are never touched
 - `mutate_table()` is the version 1 write primitive for adding rows, archiving rows, or updating mutable rows in any supported table
 - Reference rows and package seed rows are immutable through the feedr API; users can add `project_override` or `user_lab` rows, but cannot modify seeded NRC/NASEM-style rows in place
@@ -432,6 +437,7 @@ Recommended common row-policy columns for mutable/audited tables:
 | archived_at | TIMESTAMP | NULL means active |
 
 Policy behavior:
+
 - NRC/NASEM-style package seed rows should be `row_origin = "package_seed"` and `row_policy = "protected"`
 - Protected rows cannot be updated, archived, or deleted by `mutate_table()` unless an internal migration path sets `.allow_protected = TRUE`
 - User corrections to protected values are represented as new rows with `source_type = "user_lab"` or `source_type = "project_override"`
@@ -1430,6 +1436,7 @@ plausible-looking but wrong diet formulations.
 - Use messages for normal progress only when helpful, especially during DB initialization, migration, seeding, and API price updates
 - Every solver result should include diagnostics: solver status, binding constraints, missing nutrients, converted units, selected price scenario, and data provenance
 - Errors and warnings should name the ingredient, nutrient, unit, source, and suggested fix whenever possible
+- **Never make a silent assumption about which equation, reference system, or input value to use.** If a required input is missing or ambiguous, stop and tell the user exactly what is needed. Silently defaulting to a reference system, an equation version, or a derived animal parameter is a scientific reproducibility failure.
 
 ### Required checks
 
@@ -1445,6 +1452,8 @@ plausible-looking but wrong diet formulations.
 - Infeasible LP problems, with the nearest explanation available: impossible bounds, missing nutrients, or conflicting constraints
 - Stale price data when `price_date` is older than a user-defined threshold
 - User lab imports that overwrite or supersede existing active values
+- Any animal profile field that was derived or assumed rather than user-supplied — must be flagged explicitly, not silently accepted
+- Any requirement value produced by `calculate_requirements()` that relied on a fallback or derived input — must report which equation, which inputs, and which values were assumed vs. user-supplied
 
 ### Example diagnostics
 
@@ -1473,6 +1482,123 @@ constraint_set(limits)
 #> Cannot build constraint set because ratio constraint `met_lys_min` references
 #> nutrient `sid_met`, which is not present in the selected ingredient set.
 #> Add `sid_met` values, select a different nutrient, or remove this constraint row.
+```
+
+---
+
+## Scientific Transparency and Equation Provenance
+
+This is a core non-negotiable quality bar, not an optional nicety. A nutritionist submitting diet
+calculations to a client, a regulatory body, a university, or a peer-reviewed journal must be able to
+state exactly which equations were used, with which inputs, from which source, and at which version.
+feedr must make that statement trivial to produce — ideally automatic.
+
+### Principle: no silent decisions
+
+Every step that involves an equation, a reference system, an assumed value, or a precedence rule must
+surface that decision to the user. The user may not know which assumption was made unless feedr tells them.
+
+Rules:
+- `calculate_requirements()` must print, at minimum: the source system used (e.g. "NASEM2022"), the
+  `equation_id` evaluated for each nutrient, the animal profile inputs supplied to each equation, and
+  any inputs that were derived or assumed rather than user-provided
+- `diet_spec()` must carry and display the provenance of every requirement value: source, equation_id,
+  effective_date, and basis
+- `solve_diet()` / `explain_solution()` must include a full provenance block: requirement source,
+  equation IDs, nutrient value sources (NRC/NASEM/user_lab/project_override), price scenario ID,
+  constraint set ID, solver used, and feedr package version
+- If any animal profile field was absent and a default or derived value was used, this must be printed
+  as a warning, not silently accepted. The warning must name the field, the value used, and the source
+  of the assumption
+- If two nutrient value records are available for the same ingredient × nutrient (e.g. reference +
+  user_lab) and the resolved precedence rule selected one, that selection must be visible in the result
+  — users should not have to query the raw audit table to discover which value was used
+
+### What `explain_solution()` must show
+
+The result of `explain_solution(result)` must include a human-readable provenance section that covers:
+
+```
+Requirement system
+  Source:        NASEM2022
+  Equations:     grower_sid_lys (eq_id: nasem2022_swine_grower_sid_lys_bw_adg)
+                 grower_ne     (eq_id: nasem2022_swine_grower_ne_bw_adg)
+  Animal inputs: mean_bw_kg = 37.5 (user-supplied)
+                 adg_g_day  = 850  (user-supplied)
+                 adfi_kg_day = 1.9  (user-supplied)
+                 sex        = barrow (user-supplied)
+
+Nutrient values
+  CYD2 me_swine: 3310 kcal/kg as-fed — source: user_lab / lab_oct2025 (supersedes NRC2012 ref: 3386)
+  SBM48 sid_lys: 2.89 % as-fed     — source: reference / NRC2012
+
+Price scenario:  today_manual (user_defined, 2025-10-15)
+Constraint set:  grower_practical_limits
+
+Solver:          HiGHS 1.7.2 via ROI.plugin.highs 1.0.1
+feedr version:   0.1.0
+```
+
+### What `as_tibble(result, "provenance")` must return
+
+A machine-readable provenance table that can be saved alongside results for audit and publication.
+Columns should include: `nutrient_id`, `equation_id`, `source`, `animal_input_name`,
+`animal_input_value`, `animal_input_origin` ("user_supplied" vs "derived" vs "assumed_default"),
+`nutrient_value_source`, `nutrient_value_source_id`, and `feedr_version`.
+
+### Requirement equation traceability
+
+When `calculate_requirements()` evaluates equations from `requirement_equations`, it must:
+1. Log every `equation_id` evaluated and the row from `requirement_equations` that defined it
+2. Store the evaluated animal inputs alongside the result rows — not just the output requirement value
+3. Warn for any equation input that was not in the user-supplied `animal_profile()` and was derived
+   or assumed — naming the field, the derived value, and the equation or rule that produced it
+4. Return a tibble that includes `equation_id`, `source`, `assumption_flag`, and
+   `assumed_inputs` columns alongside the standard requirement columns, so the downstream
+   `diet_spec()` and `explain_solution()` can surface them
+
+### No silent reference system selection
+
+feedr must never silently choose a reference system. If `filter()` is used to narrow
+`requirement_equations` to a single `source`, that choice is explicit and belongs to the user's script.
+If the user does not filter and multiple sources are present, `calculate_requirements()` must error with
+a clear message listing the available sources and asking the user to select one. The same applies to
+`nutrient_values`: if `source_type` is ambiguous and precedence rules select one, the selection must be
+visible, not hidden.
+
+### Example: transparent requirement calculation output
+
+```r
+spec <- feedr |>
+  get_table("requirement_equations") |>
+  filter(source == "NASEM2022", species == "swine", production_class == "grower") |>
+  calculate_requirements(animal = pig)
+#> Evaluating requirements from NASEM2022 (swine / grower) — 12 equations
+#>
+#> Animal profile inputs used:
+#>   mean_bw_kg    = 37.5  [user-supplied]
+#>   adg_g_day     = 850   [user-supplied]
+#>   adfi_kg_day   = 1.9   [user-supplied]
+#>   sex           = barrow [user-supplied]
+#>   lean_growth_g_day = 340 [user-supplied]
+#>
+#> Equations evaluated:
+#>   sid_lys  → eq_id: nasem2022_swine_grower_sid_lys_bw_adg   → 0.92 % as-fed
+#>   ne_swine → eq_id: nasem2022_swine_grower_ne_maint_growth  → 2461 kcal/kg as-fed
+#>   sttd_p   → eq_id: nasem2022_swine_grower_sttd_p_bw        → 0.31 % as-fed
+#>   ...
+#>
+#> No assumptions were made. All required inputs were user-supplied.
+```
+
+If any input was assumed:
+
+```r
+#> Warning:
+#> lean_growth_g_day was not provided in animal_profile() and was derived from
+#> adg_g_day using the NASEM2022 default barrow regression (eq_id: nasem2022_lgr_barrow_regression).
+#> Derived value: 312 g/day.
+#> To avoid this assumption, supply lean_growth_g_day explicitly in animal_profile().
 ```
 
 ---
@@ -1838,6 +1964,7 @@ feedr/
 | 16 | Column naming? | **Use meaningful, table-specific value names.** Avoid bare `value`, `min`, `max`, and `target` columns in user-facing tables. Prefer `nutrient_value`, `price_value`, `requirement_min`, `constraint_max`, etc., so collected/joined tables remain readable. |
 | 17 | Unit/basis design? | **Keep measurement units and basis separate.** `unit_id` is scale only (`pct`, `kcal_kg`, `usd_short_ton`); `basis` is a normal filterable column (`as_fed`, `dry_matter`, `energy_density`, `contract`). Do not encode basis in unit names. |
 | 18 | Hosting and CI? | **GitHub + GitHub Actions, tested on macOS, Linux, and Windows.** Cross-platform package checks are required so feedr does not accidentally depend on Apple-only paths, shell behavior, or system tooling. |
+| 19 | Scientific transparency? | **Full equation provenance is mandatory, not optional.** Every result must surface which equations were used, which reference system was selected, which animal inputs were user-supplied vs. derived/assumed, and which nutrient value record won precedence. No silent defaults. `explain_solution()` and `as_tibble(result, "provenance")` must make this information accessible without querying raw audit tables. Any assumption made on the user's behalf is a warning, not a silent behavior. See "Scientific Transparency and Equation Provenance" section. |
 
 ## Open Questions (still to decide)
 

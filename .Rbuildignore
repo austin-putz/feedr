@@ -2,3 +2,5 @@
 ^plans$
 ^examples$
 ^LICENSE$
+^.*\.Rproj$
+^\.Rproj\.user$

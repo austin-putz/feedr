@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PKG_SYSREQS: "false"
+
 jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
@@ -40,4 +43,3 @@ jobs:
         with:
           error-on: '"error"'
           check-dir: '"check"'
-

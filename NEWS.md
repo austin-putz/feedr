@@ -1,3 +1,35 @@
+# feedr 0.0.0.9004
+
+## New functions
+
+- `get_table(feedr, name)` — opens a database table as a lazy `feedr_tbl` object;
+  supports `dplyr::filter()`, `dplyr::select()`, and `dplyr::collect()` in a pipe
+  without ever exposing `$con` to the user.
+- `mutate_table(.data, ..., .default = TRUE)` — adds new columns via
+  `ALTER TABLE ADD COLUMN`; infers SQL type from the R value supplied (`VARCHAR`,
+  `INTEGER`, `DOUBLE`, `BOOLEAN`, `DATE`, `TIMESTAMP`); value doubles as the SQL
+  `DEFAULT` when `.default = TRUE`. Accepts a logical vector for `.default` to mix
+  defaults per-column. Partial success: already-existing columns are skipped with a
+  warning; only fails hard if every requested column already exists.
+- `append_rows(.data, ..., .rows = NULL)` — inserts rows via inline `col = val`
+  named args (one row) or a tibble via `.rows`. Falls back to row-by-row insert for
+  partial-success reporting on bulk failures.
+- `archive_rows(.data, .reason = NULL, .by = NULL)` — soft-delete: sets
+  `archived_at = current_timestamp` on filtered rows; never physically removes data.
+  Requires an `archived_at` column — gives a clear fix command if absent.
+- `update_rows(.data, ..., .rows = NULL, .by = NULL)` — updates values in existing
+  rows. Scalar mode recycles a single value to all filtered rows; tibble mode matches
+  on `.by` key column. Vectors (length > 1) in `...` are rejected immediately with a
+  helpful error. Respects `row_policy = 'protected'` rows.
+
+## Other changes
+
+- `feedr_tbl` S3 class: `filter`, `select`, and `collect` methods registered so
+  dplyr verbs work natively before collecting.
+- `dplyr` added to `Imports`.
+- Fixed non-ASCII string literals in `R/db.R` and `R/zzz.R` for R CMD check
+  portability.
+
 # feedr 0.0.0.9003
 
 - Renamed `phases` table to `feeding_phases` for clarity.

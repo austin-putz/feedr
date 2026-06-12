@@ -4,10 +4,10 @@
 
   ver <- as.character(utils::packageVersion("feedr"))
 
-  header_text <- paste0("── feedr ", ver, " ")
-  fill        <- paste(rep("─", max(0L, 65L - nchar(header_text))), collapse = "")
+  header_text <- paste0("-- feedr ", ver, " ")
+  fill        <- paste(rep("-", max(0L, 65L - nchar(header_text))), collapse = "")
   header      <- paste0(header_text, fill)
-  footer      <- paste(rep("─", 65L), collapse = "")
+  footer      <- paste(rep("-", 65L), collapse = "")
 
   fmt <- function(name, default) {
     val <- getOption(name, default)
@@ -17,9 +17,9 @@
   packageStartupMessage(
     header,                                                              "\n",
     "  Livestock Diet Formulation and Optimization\n",
-    "  License: GPL-3 · No warranty; use at your own risk\n",
+    "  License: GPL-3 | No warranty; use at your own risk\n",
     "\n",
-    "  Help:      ?feedr  ·  browseVignettes(\"feedr\")\n",
+    "  Help:      ?feedr  |  browseVignettes(\"feedr\")\n",
     "  Issues:    https://github.com/austin-putz/feedr/issues\n",
     "\n",
     "  Backend:   DuckDB (in-memory or file-backed)\n",

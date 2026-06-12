@@ -36,7 +36,7 @@ init_feedr_db <- function(path = NULL,
   in_memory <- identical(path, ":memory:")
 
   if (migrate) {
-    message("feedr: migrate = TRUE has no effect yet — no migrations are defined.")
+    message("feedr: migrate = TRUE has no effect yet - no migrations are defined.")
   }
 
   if (in_memory) {
@@ -249,10 +249,10 @@ init_feedr_db <- function(path = NULL,
 
 #' @export
 print.feedr_session <- function(x, ...) {
-  header_text <- "── feedr_session "
-  fill   <- paste(rep("─", max(0L, 50L - nchar(header_text))), collapse = "")
+  header_text <- "-- feedr_session "
+  fill   <- paste(rep("-", max(0L, 50L - nchar(header_text))), collapse = "")
   header <- paste0(header_text, fill)
-  footer <- paste(rep("─", 50L), collapse = "")
+  footer <- paste(rep("-", 50L), collapse = "")
 
   cat(
     header,                                                    "\n",

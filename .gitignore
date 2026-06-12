@@ -1,3 +1,7 @@
+# general or R basics 
 *.Rcheck/
 *.tar.gz
 .Rproj.user
+# directories
+temp/*
+

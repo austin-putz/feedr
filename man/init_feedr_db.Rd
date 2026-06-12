@@ -15,7 +15,7 @@ from options: \code{getOption("feedr.db_path")} (directory, default
 \code{feedr.db}, \code{feedr.duckdb}, or a project-specific name like \code{swine.db}.}
 
 \item{seed}{If \code{TRUE} and the database is new (or in-memory), populate it
-with example rows for \code{units}, \code{phases}, \code{nutrients}, and \code{ingredients}.
+with example rows for \code{units}, \code{feeding_phases}, \code{nutrients}, and \code{ingredients}.
 No licensed NRC/NASEM values are included — rows are synthetic examples.}
 
 \item{migrate}{If \code{TRUE}, run pending schema migrations. Currently a no-op;

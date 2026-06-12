@@ -16,7 +16,7 @@
 #'   `"feedr.db"`). Any file extension is accepted — common choices are
 #'   `feedr.db`, `feedr.duckdb`, or a project-specific name like `swine.db`.
 #' @param seed If `TRUE` and the database is new (or in-memory), populate it
-#'   with example rows for `units`, `phases`, `nutrients`, and `ingredients`.
+#'   with example rows for `units`, `feeding_phases`, `nutrients`, and `ingredients`.
 #'   No licensed NRC/NASEM values are included — rows are synthetic examples.
 #' @param migrate If `TRUE`, run pending schema migrations. Currently a no-op;
 #'   no migrations are defined yet.
@@ -112,14 +112,12 @@ init_feedr_db <- function(path = NULL,
   ")
 
   DBI::dbExecute(con, "
-    CREATE TABLE IF NOT EXISTS phases (
-      phase_id         VARCHAR PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS feeding_phases (
+      feeding_phase_id VARCHAR PRIMARY KEY,
       species          VARCHAR NOT NULL,
       production_class VARCHAR NOT NULL,
       phase_name       VARCHAR NOT NULL,
       sort_order       INTEGER,
-      bw_min_kg        DOUBLE,
-      bw_max_kg        DOUBLE,
       description      VARCHAR,
       active           BOOLEAN DEFAULT TRUE,
       created_at       TIMESTAMP DEFAULT current_timestamp
@@ -167,20 +165,18 @@ init_feedr_db <- function(path = NULL,
     description = c("Percent (%)",  "kcal per kg",   "Fraction (0-1)")
   ))
 
-  DBI::dbAppendTable(con, "phases", data.frame(
-    phase_id         = c("nursery_p1",       "nursery_p2",       "nursery_p3",
-                         "grower",           "finisher",
-                         "gestation",        "lactation"),
+  DBI::dbAppendTable(con, "feeding_phases", data.frame(
+    feeding_phase_id = c("swine_nursery_p1", "swine_nursery_p2", "swine_nursery_p3",
+                         "swine_grower",     "swine_finisher",
+                         "swine_gestation",  "swine_lactation"),
     species          = rep("swine", 7),
-    production_class = c("nursery",          "nursery",          "nursery",
-                         "grower",           "finisher",
-                         "breeding",         "breeding"),
-    phase_name       = c("Nursery Phase 1",  "Nursery Phase 2",  "Nursery Phase 3",
-                         "Grower",           "Finisher",
-                         "Gestation",        "Lactation"),
+    production_class = c("nursery",  "nursery",  "nursery",
+                         "grower",   "finisher",
+                         "breeding", "breeding"),
+    phase_name       = c("Nursery Phase 1", "Nursery Phase 2", "Nursery Phase 3",
+                         "Grower",          "Finisher",
+                         "Gestation",       "Lactation"),
     sort_order       = 1:7,
-    bw_min_kg        = c(5,   7,   11,  23,  50,  NA,  NA),
-    bw_max_kg        = c(7,   11,  23,  50,  130, NA,  NA),
     description      = c("5-7 kg BW", "7-11 kg BW", "11-23 kg BW",
                          "23-50 kg BW", "50-130 kg BW",
                          "Gestating sow", "Lactating sow"),

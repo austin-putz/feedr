@@ -4,7 +4,7 @@
 \alias{append_rows}
 \title{Append one or more rows to a feedr table}
 \usage{
-append_rows(.data, ..., .rows = NULL)
+append_rows(.data, ..., .rows = NULL, .replace = FALSE)
 }
 \arguments{
 \item{.data}{A \code{feedr_tbl} from \code{\link[=get_table]{get_table()}}.}
@@ -15,6 +15,11 @@ with \code{.rows}.}
 
 \item{.rows}{A tibble or data frame of rows to insert. Cannot be used
 together with \code{...}.}
+
+\item{.replace}{If \code{FALSE} (default), duplicate primary keys cause an error
+or per-row warning. If \code{TRUE}, existing rows whose primary key matches an
+incoming row are deleted first, then all rows in the call are inserted.
+The primary key column must be present in the supplied data.}
 }
 \value{
 The original \code{feedr_tbl} invisibly (for piping).
@@ -22,6 +27,11 @@ The original \code{feedr_tbl} invisibly (for piping).
 \description{
 Inserts rows into the table identified by the \code{feedr_tbl}. Supply individual
 column values inline or pass a tibble/data frame via \code{.rows}.
+}
+\details{
+When \code{.replace = TRUE}, any existing rows whose primary key matches an
+incoming row are permanently \strong{deleted} before the insert. A WARNING is
+printed before any data is removed and the operation cannot be undone.
 }
 \examples{
 \dontrun{
@@ -39,5 +49,10 @@ db |> get_table("ingredients") |>
     name             = "Test 2",
     ingredient_class = "grain"
   ))
+
+# Replace an existing row (DELETE + INSERT)
+db |> get_table("ingredients") |>
+  append_rows(ingredient_id = "test_grain", name = "Corrected Grain",
+              ingredient_class = "grain", active = TRUE, .replace = TRUE)
 }
 }

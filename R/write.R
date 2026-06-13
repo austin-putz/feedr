@@ -244,12 +244,20 @@ mutate_table <- function(.data, ..., .default = TRUE) {
 #' Inserts rows into the table identified by the `feedr_tbl`. Supply individual
 #' column values inline or pass a tibble/data frame via `.rows`.
 #'
-#' @param .data A `feedr_tbl` from [get_table()].
-#' @param ...   Named column-value pairs for a single new row, e.g.
+#' When `.replace = TRUE`, any existing rows whose primary key matches an
+#' incoming row are permanently **deleted** before the insert. A WARNING is
+#' printed before any data is removed and the operation cannot be undone.
+#'
+#' @param .data    A `feedr_tbl` from [get_table()].
+#' @param ...      Named column-value pairs for a single new row, e.g.
 #'   `ingredient_id = "corn3", name = "Corn #3"`. Cannot be used together
 #'   with `.rows`.
-#' @param .rows A tibble or data frame of rows to insert. Cannot be used
+#' @param .rows    A tibble or data frame of rows to insert. Cannot be used
 #'   together with `...`.
+#' @param .replace If `FALSE` (default), duplicate primary keys cause an error
+#'   or per-row warning. If `TRUE`, existing rows whose primary key matches an
+#'   incoming row are deleted first, then all rows in the call are inserted.
+#'   The primary key column must be present in the supplied data.
 #'
 #' @return The original `feedr_tbl` invisibly (for piping).
 #'
@@ -269,9 +277,14 @@ mutate_table <- function(.data, ..., .default = TRUE) {
 #'     name             = "Test 2",
 #'     ingredient_class = "grain"
 #'   ))
+#'
+#' # Replace an existing row (DELETE + INSERT)
+#' db |> get_table("ingredients") |>
+#'   append_rows(ingredient_id = "test_grain", name = "Corrected Grain",
+#'               ingredient_class = "grain", active = TRUE, .replace = TRUE)
 #' }
 #' @export
-append_rows <- function(.data, ..., .rows = NULL) {
+append_rows <- function(.data, ..., .rows = NULL, .replace = FALSE) {
 
   .feedr_check_tbl(.data, "append_rows")
 
@@ -331,7 +344,77 @@ append_rows <- function(.data, ..., .rows = NULL) {
 
   n_rows <- nrow(new_df)
 
-  # Try bulk insert first; fall back to row-by-row for partial success reporting
+  # --- .replace = TRUE: DELETE matching PKs then INSERT all rows ---
+  if (isTRUE(.replace)) {
+
+    message(
+      "feedr WARNING: .replace = TRUE - existing rows with matching primary keys\n",
+      "  will be permanently deleted before inserting. This cannot be undone."
+    )
+
+    pk_col <- tryCatch(
+      .feedr_pk(con, tbl_name),
+      error = function(e) {
+        stop(
+          "Cannot use .replace = TRUE: no primary key detected on '", tbl_name, "'.\n",
+          "  Add a primary key or use update_rows() to update existing rows.",
+          call. = FALSE
+        )
+      }
+    )
+
+    if (!pk_col %in% names(new_df)) {
+      stop(
+        "Cannot use .replace = TRUE: primary key column '", pk_col,
+        "' must be included in the data.",
+        call. = FALSE
+      )
+    }
+
+    pk_vals <- as.character(new_df[[pk_col]])
+
+    # Protection check - hard stop if any incoming PK is protected
+    checked <- .feedr_filter_protected(con, tbl_name, pk_col, pk_vals)
+    if (length(checked$protected) > 0L) {
+      stop(
+        "Cannot replace protected row(s): ",
+        paste0("'", checked$protected, "'", collapse = ", "), ".\n",
+        "  These rows have row_policy = 'protected' and are read-only.",
+        call. = FALSE
+      )
+    }
+
+    quoted_pks <- paste0("'", gsub("'", "''", pk_vals), "'", collapse = ", ")
+
+    # Count how many incoming PKs already exist (for messaging only)
+    n_existing <- DBI::dbGetQuery(con, paste0(
+      "SELECT COUNT(*) AS n FROM \"", tbl_name, "\" ",
+      "WHERE \"", pk_col, "\" IN (", quoted_pks, ")"
+    ))$n
+
+    DBI::dbWithTransaction(con, {
+      DBI::dbExecute(con, paste0(
+        "DELETE FROM \"", tbl_name, "\" WHERE \"", pk_col, "\" IN (", quoted_pks, ")"
+      ))
+      DBI::dbAppendTable(con, tbl_name, new_df)
+    })
+
+    n_new <- n_rows - n_existing
+    if (n_existing > 0L && n_new > 0L) {
+      message(
+        "feedr: Replaced ", n_existing, " row(s) and appended ",
+        n_new, " new row(s) in '", tbl_name, "'."
+      )
+    } else if (n_existing > 0L) {
+      message("feedr: Replaced ", n_existing, " row(s) in '", tbl_name, "'.")
+    } else {
+      message("feedr: Appended ", n_new, " row(s) to '", tbl_name, "'.")
+    }
+
+    return(invisible(.data))
+  }
+
+  # --- .replace = FALSE (default): try bulk insert, fall back row-by-row ---
   tryCatch(
     {
       DBI::dbWithTransaction(con, {
@@ -740,6 +823,148 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
         call. = FALSE
       )
     }
+  }
+
+  invisible(.data)
+}
+
+
+# ---------------------------------------------------------------------------
+# drop_rows() - permanent physical row deletion
+# ---------------------------------------------------------------------------
+
+#' Permanently delete rows from a feedr table
+#'
+#' Physically removes rows from the table. **This cannot be undone.**
+#' For a reversible alternative, see [archive_rows()].
+#'
+#' Two modes:
+#' * **Filtered** (`.all = FALSE`, default) - deletes only the rows matched
+#'   by any prior [dplyr::filter()] on the `feedr_tbl`.
+#' * **Wipe** (`.all = TRUE`) - deletes every row in the table. A WARNING is
+#'   printed before any data is removed.
+#'
+#' If the table has a `row_policy` column, rows marked `'protected'` are
+#' skipped in filtered mode (with a warning) or cause a hard stop in `.all`
+#' mode.
+#'
+#' @param .data A `feedr_tbl` from [get_table()], optionally pre-filtered.
+#' @param .by   Column name to use as the row key for the `WHERE` clause.
+#'   Defaults to auto-detecting the primary key. Ignored when `.all = TRUE`.
+#' @param .all  If `FALSE` (default), delete only the filtered rows. If
+#'   `TRUE`, delete every row in the table regardless of any prior filter.
+#'
+#' @return The original `feedr_tbl` invisibly (for piping).
+#'
+#' @seealso [archive_rows()] for a soft-delete that keeps data recoverable.
+#'
+#' @examples
+#' \dontrun{
+#' db <- init_feedr_db(seed = TRUE)
+#'
+#' # Delete one row matched by a filter
+#' db |> get_table("ingredients") |>
+#'   dplyr::filter(ingredient_id == "salt") |>
+#'   drop_rows()
+#'
+#' # Wipe all rows from a table
+#' db |> get_table("units") |> drop_rows(.all = TRUE)
+#' }
+#' @export
+drop_rows <- function(.data, .by = NULL, .all = FALSE) {
+
+  .feedr_check_tbl(.data, "drop_rows")
+
+  con      <- .data$session$con
+  tbl_name <- .data$table_name
+
+  # --- .all = TRUE: wipe the entire table ---
+  if (isTRUE(.all)) {
+
+    # Hard stop if any protected rows exist — wiping while silently skipping
+    # them would leave the table non-empty against the user's expectation.
+    fields <- DBI::dbListFields(con, tbl_name)
+    if ("row_policy" %in% fields) {
+      n_protected <- DBI::dbGetQuery(con, paste0(
+        "SELECT COUNT(*) AS n FROM \"", tbl_name, "\" ",
+        "WHERE row_policy = 'protected'"
+      ))$n
+      if (n_protected > 0L) {
+        stop(
+          "Cannot use .all = TRUE: ", n_protected, " row(s) in '", tbl_name,
+          "' are protected (row_policy = 'protected').\n",
+          "  Remove protection first, then retry.",
+          call. = FALSE
+        )
+      }
+    }
+
+    n_rows <- DBI::dbGetQuery(
+      con, paste0("SELECT COUNT(*) AS n FROM \"", tbl_name, "\"")
+    )$n
+
+    message(
+      "feedr WARNING: .all = TRUE - permanently deleting ALL ", n_rows,
+      " row(s) from '", tbl_name, "'.\n",
+      "  This cannot be undone."
+    )
+
+    DBI::dbWithTransaction(con, {
+      DBI::dbExecute(con, paste0("DELETE FROM \"", tbl_name, "\""))
+    })
+
+    message("feedr: Permanently deleted ", n_rows, " row(s) from '", tbl_name, "'.")
+    return(invisible(.data))
+  }
+
+  # --- .all = FALSE (default): filtered delete ---
+  pk_col <- .feedr_pk(con, tbl_name, user_by = .by)
+
+  pk_vals <- dplyr::collect(
+    dplyr::select(.data$lazy_tbl, dplyr::all_of(pk_col))
+  )[[pk_col]]
+
+  if (length(pk_vals) == 0L) {
+    message(
+      "feedr WARNING: 0 rows matched - nothing was deleted from '", tbl_name, "'.\n",
+      "  Check your filter() conditions."
+    )
+    return(invisible(.data))
+  }
+
+  checked <- .feedr_filter_protected(con, tbl_name, pk_col, pk_vals)
+
+  if (length(checked$ok) == 0L) {
+    stop(
+      "All targeted rows are protected and cannot be deleted from '", tbl_name, "'.",
+      call. = FALSE
+    )
+  }
+
+  quoted <- paste0(
+    "'", gsub("'", "''", as.character(checked$ok)), "'", collapse = ", "
+  )
+
+  DBI::dbWithTransaction(con, {
+    DBI::dbExecute(con, paste0(
+      "DELETE FROM \"", tbl_name, "\" WHERE \"", pk_col, "\" IN (", quoted, ")"
+    ))
+  })
+
+  message(
+    "feedr: Permanently deleted ", length(checked$ok), " row(s) from '", tbl_name, "'."
+  )
+
+  if (length(checked$protected) > 0L) {
+    warning(
+      "feedr WARNING: ", length(checked$protected), " row(s) skipped:\n",
+      paste0(
+        "  ", pk_col, " '", checked$protected,
+        "' - row_policy = 'protected' (read-only)",
+        collapse = "\n"
+      ),
+      call. = FALSE
+    )
   }
 
   invisible(.data)

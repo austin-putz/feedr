@@ -133,70 +133,123 @@ feedr |>
 
 ### 3.1 Naming rules
 
-```
-<category>_<nutrient>_<qualifier>
+The `nutrient_id` convention follows PLAN.md: use the shortest unambiguous identifier for the
+nutrient itself, qualified only where necessary (digestibility basis, energy system, species).
+The `nutrient_class` column in the `nutrients` table carries category information — there is no
+need to encode it in the ID.
 
-Examples:
-  energy_ne_swine       -- Net Energy for swine (kcal/kg)
-  energy_nem_beef       -- Net Energy for maintenance, beef (Mcal/kg)
-  energy_neg_beef       -- Net Energy for gain, beef (Mcal/kg)
-  energy_nel_dairy      -- Net Energy for lactation, dairy (Mcal/kg)
-  energy_me_swine       -- Metabolizable Energy, swine (kcal/kg)
-  energy_amen_poultry   -- AMEn (N-corrected), poultry (kcal/kg)
-  energy_de_salmon      -- Digestible Energy, Atlantic salmon (kcal/kg)
-  aa_sid_lys            -- SID Lysine (swine/poultry context)
-  aa_dig_lys_poultry    -- Digestible Lysine (poultry-specific digestibility basis)
-  aa_lys_pct_mp         -- Lysine as % of metabolizable protein (ruminants)
-  min_ca                -- Calcium
-  min_p_total           -- Total Phosphorus
-  min_p_sttd            -- STTD Phosphorus (swine)
-  min_p_npp             -- Non-phytate-digestible Phosphorus (poultry)
-  min_p_dig             -- Digestible Phosphorus (salmon)
-  min_na                -- Sodium
-  min_cl                -- Chloride
-  min_mg                -- Magnesium
-  min_k                 -- Potassium
-  min_s                 -- Sulfur
-  min_fe                -- Iron
-  min_mn                -- Manganese
-  min_zn                -- Zinc
-  min_cu                -- Copper
-  min_se                -- Selenium
-  min_i                 -- Iodine
-  min_co                -- Cobalt
-  min_mo                -- Molybdenum
-  min_f                 -- Fluoride (maximum constraint)
-  vit_a                 -- Vitamin A
-  vit_d3                -- Vitamin D3
-  vit_d2                -- Vitamin D2
-  vit_e                 -- Vitamin E (alpha-tocopherol equivalents)
-  vit_k                 -- Vitamin K (menadione basis unless specified)
-  vit_k1                -- Phylloquinone (cats specifically)
-  vit_b1                -- Thiamin
-  vit_b2                -- Riboflavin
-  vit_b3                -- Niacin
-  vit_b5                -- Pantothenic acid
-  vit_b6                -- Pyridoxine
-  vit_b7                -- Biotin
-  vit_b9                -- Folic acid
-  vit_b12               -- Cobalamin
-  vit_c                 -- Ascorbic acid (fish; non-essential for most others)
-  vit_choline           -- Choline (often listed separately from B vitamins)
-  vit_inositol          -- Inositol (fish; non-essential for most)
-  fa_la                 -- Linoleic acid (omega-6)
-  fa_ala                -- Alpha-linolenic acid (omega-3)
-  fa_epa_dha            -- EPA + DHA combined (fish, cats, dogs)
-  fa_aa                 -- Arachidonic acid (cats specifically)
-  aa_taurine            -- Taurine (cat essential; conditionally essential dogs)
-  aa_arg                -- Arginine (critical in cats; important in all species)
-  prox_cp               -- Crude Protein (minimum)
-  prox_fat              -- Crude Fat / Ether Extract (minimum or range)
-  prox_ndf              -- Neutral Detergent Fiber (ruminants; min for rumen health)
-  prox_adf              -- Acid Detergent Fiber (ruminants)
-  prox_dm               -- Dry Matter
-  rumen_rdp_pct_cp      -- Rumen-Degradable Protein as % of CP (ruminants)
-  rumen_rup_pct_cp      -- Rumen-Undegradable Protein as % of CP (ruminants)
-  pigment_astaxanthin   -- Astaxanthin (salmon flesh pigmentation; market req, not strictly nutritional)
+**Do not prefix minerals with `min_`.** In formulation software `min_` reads as "minimum," which
+directly collides with the language of constraints. Minerals use plain element symbols: `ca`, `na`,
+`fe`, `zn`, etc. The `nutrients` table's `nutrient_class` column (`mineral_macro`, `mineral_trace`)
+distinguishes them from other nutrient types.
+
+```
+-- ENERGY: system_species qualifier; matches PLAN.md examples (me_swine, ne_swine, nel_dairy)
+ne_swine          -- Net Energy, swine (kcal/kg)
+me_swine          -- Metabolizable Energy, swine (kcal/kg)
+de_swine          -- Digestible Energy, swine (kcal/kg)
+nem_beef          -- NE maintenance, beef (Mcal/kg)
+neg_beef          -- NE gain, beef (Mcal/kg)
+nel_dairy         -- NE lactation, dairy (Mcal/kg)
+me_sheep          -- Metabolizable Energy, sheep (Mcal/kg)
+me_goat           -- Metabolizable Energy, dairy goat (Mcal/kg)
+amen_poultry      -- AMEn (N-corrected apparent ME), poultry (kcal/kg)
+me_companion      -- Metabolizable Energy, companion animals (kcal/kg)
+de_salmon         -- Digestible Energy, Atlantic salmon (kcal/kg)
+
+-- AMINO ACIDS: digestibility basis as prefix; matches PLAN.md examples (sid_lys, sttd_p)
+sid_lys           -- SID Lysine (swine; standardized ileal digestible)
+sid_met           -- SID Methionine
+sid_thr           -- SID Threonine
+sid_trp           -- SID Tryptophan
+sid_val           -- SID Valine
+sid_ile           -- SID Isoleucine
+sid_leu           -- SID Leucine
+sid_phe           -- SID Phenylalanine
+sid_his           -- SID Histidine
+sid_arg           -- SID Arginine
+dig_lys           -- Digestible Lysine (poultry / companion; different assay than SID)
+dig_met           -- Digestible Methionine
+dig_methcys       -- Digestible Met + Cys
+dig_thr           -- Digestible Threonine
+dig_trp           -- Digestible Tryptophan
+dig_arg           -- Digestible Arginine
+dig_val           -- Digestible Valine
+dig_ile           -- Digestible Isoleucine
+dig_lys_fish      -- Digestible Lysine (fish; apparent digestibility basis differs from poultry)
+dig_met_fish      -- Digestible Methionine (fish)
+dig_methcys_fish  -- Digestible Met + Cys (fish)
+dig_thr_fish      -- Digestible Threonine (fish)
+dig_arg_fish      -- Digestible Arginine (fish)
+dig_val_fish      -- Digestible Valine (fish)
+lys_pct_mp        -- Lysine as % of metabolizable protein (ruminants)
+met_pct_mp        -- Methionine as % of metabolizable protein (ruminants)
+taurine           -- Taurine (essential in cats; conditionally essential dogs)
+arg               -- Arginine (companion animals; total basis)
+
+-- PROXIMATE: standard nutrition abbreviations; matches PLAN.md examples (cp, dm)
+dm                -- Dry Matter
+cp                -- Crude Protein
+ee                -- Ether Extract / Crude Fat
+ndf               -- Neutral Detergent Fiber
+adf               -- Acid Detergent Fiber
+
+-- MINERALS — plain element symbols; nutrient_class distinguishes macro vs trace
+-- Macrominerals (nutrient_class = "mineral_macro")
+ca                -- Calcium
+p_total           -- Total Phosphorus
+p_sttd            -- STTD Phosphorus (swine; matches PLAN.md example sttd_p)
+p_npp             -- Non-phytate-digestible Phosphorus (poultry)
+p_dig             -- Digestible Phosphorus (salmon)
+p_avail           -- Available Phosphorus (legacy systems)
+na                -- Sodium
+cl                -- Chloride
+mg                -- Magnesium
+k                 -- Potassium
+s                 -- Sulfur
+
+-- Trace minerals (nutrient_class = "mineral_trace")
+fe                -- Iron
+mn                -- Manganese
+zn                -- Zinc
+cu                -- Copper
+se                -- Selenium
+iod               -- Iodine  (avoid single letter i; could be confused with integer index)
+co                -- Cobalt
+mo                -- Molybdenum
+fl                -- Fluoride  (avoid single letter f; keep as max constraint)
+
+-- VITAMINS: vit_ prefix is unambiguous and widely understood
+vit_a             -- Vitamin A (retinol equivalents)
+vit_d3            -- Vitamin D3 (cholecalciferol)
+vit_d2            -- Vitamin D2 (ergocalciferol)
+vit_e             -- Vitamin E (alpha-tocopherol equivalents)
+vit_k             -- Vitamin K (menadione basis unless noted)
+vit_k1            -- Vitamin K1 / Phylloquinone (cats specifically)
+vit_b1            -- Thiamin
+vit_b2            -- Riboflavin
+vit_b3            -- Niacin
+vit_b5            -- Pantothenic acid
+vit_b6            -- Pyridoxine
+vit_b7            -- Biotin
+vit_b9            -- Folic acid
+vit_b12           -- Cobalamin
+vit_c             -- Ascorbic acid (essential for fish; non-essential for most others)
+choline           -- Choline (grouped with B vitamins nutritionally but distinct)
+inositol          -- Inositol (essential for fish; non-essential for most)
+
+-- FATTY ACIDS: fa_ prefix
+fa_la             -- Linoleic acid (omega-6, C18:2)
+fa_ala            -- Alpha-linolenic acid (omega-3, C18:3)
+fa_epa_dha        -- EPA + DHA combined (omega-3 long-chain)
+fa_aa             -- Arachidonic acid (omega-6, C20:4; cats cannot synthesize)
+
+-- RUMEN PROTEIN: fraction qualifier as prefix
+rdp_pct_cp        -- Rumen-Degradable Protein as % of CP
+rup_pct_cp        -- Rumen-Undegradable Protein as % of CP
+
+-- PIGMENT
+astaxanthin       -- Astaxanthin (salmon flesh color; market requirement, not strictly nutritional)
 ```
 
 ### 3.2 Nutrient classes
@@ -228,7 +281,7 @@ Examples:
   for modern phytase-era formulations. Keep total-P and STTD-P as separate `nutrient_id` values.
 - Vitamins are often fed at multiples of NRC minima in practice (2–4x for insurance).
 - Copper: swine are fed pharmacological Cu (125–250 ppm) for growth promotion in some markets;
-  distinguish `min_cu_nrc` (nutritional minimum) from `min_cu_growth` (growth-promotion level) and
+  distinguish `cu` (nutritional minimum) from a separate `cu_growth` row (growth-promotion level) and
   note legal/regulatory maximums by region.
 
 ### 4.2 Beef
@@ -240,7 +293,7 @@ Examples:
 - Minerals: beef have very different Ca requirements across classes (growing vs. finishing vs.
   lactating beef cows). Always pair with `production_class`.
 - Sulfur maximum: high-sulfur diets (>0.4% DM) in beef feedlots cause polioencephalomalacia (PEM).
-  Include `min_s` with a requirement_max.
+  Include `s` with a requirement_max.
 - Selenium: legal maximum 3 mg/kg DM in the US (FDA; varies by country). Always include max.
 
 ### 4.3 Dairy Cattle
@@ -249,7 +302,7 @@ Examples:
   **NEg** for dry/growing dairy cattle.
 - Requirements in NASEM 2021 are expressed on **DM basis** for all nutrients.
 - **NDF minimum** (28–30% DM) is critical for rumen health and fat content of milk. This is best
-  modeled as a `requirement_min` on `prox_ndf`.
+  modeled as a `requirement_min` on `ndf`.
 - **DCAD** (Dietary Cation-Anion Difference, mEq/kg) is a critical parameter around calving
   (transition period). This is a derived constraint that combines Na, K, Cl, S — model it in
   `constraint_terms` rather than as a direct nutrient requirement.
@@ -267,7 +320,7 @@ Examples:
   precise trace mineral formulation matters greatly.
 - Selenium regional variation: high-selenium vs. low-selenium areas of the world — default to the
   minimum requirement but note regulatory maxima.
-- Cobalt: ruminants need Co for rumen microbes to synthesize Vit B12. Include a `min_co` row.
+- Cobalt: ruminants need Co for rumen microbes to synthesize Vit B12. Include a `co` row.
 
 ### 4.5 Layer Poultry
 
@@ -407,39 +460,39 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 `basis = "as_fed"`, `source = "illustrative"`
 
 | nutrient_id | req_min | req_max | unit_id | notes |
-|---|---|---|---|---|
-| `energy_ne_swine` | 2400 | — | `kcal_kg` | NE for growth; NASEM 2022 basis |
-| `prox_cp` | 16.0 | — | `pct` | Crude protein floor; AA-balanced diet can go lower |
-| `aa_sid_lys` | 0.90 | — | `pct` | First-limiting AA; all other AA ratios relative to Lys |
-| `aa_sid_met` | 0.26 | — | `pct` | ~29% of Lys (ideal protein ratio) |
-| `aa_sid_thr` | 0.58 | — | `pct` | ~65% of Lys |
-| `aa_sid_trp` | 0.16 | — | `pct` | ~18% of Lys |
-| `aa_sid_val` | 0.65 | — | `pct` | ~72% of Lys |
-| `aa_sid_ile` | 0.55 | — | `pct` | |
-| `min_ca` | 0.59 | 0.90 | `pct` | Maximum set to limit Ca:STTD-P ratio |
-| `min_p_sttd` | 0.29 | — | `pct` | STTD Phosphorus; phytase credit applies |
-| `min_na` | 0.18 | 0.25 | `pct` | |
-| `min_cl` | 0.16 | — | `pct` | |
-| `min_mg` | 0.04 | — | `pct` | |
-| `min_k` | 0.23 | — | `pct` | |
-| `min_fe` | 80 | — | `mg_kg` | |
-| `min_mn` | 4 | — | `mg_kg` | |
-| `min_zn` | 80 | — | `mg_kg` | |
-| `min_cu` | 5 | 250 | `mg_kg` | Max varies by country/growth-promotion rules |
-| `min_se` | 0.30 | 0.50 | `mg_kg` | Regulatory max 0.5 mg/kg (US FDA) |
-| `min_i` | 0.35 | — | `mg_kg` | |
-| `vit_a` | 1300 | 13000 | `iu_kg` | Toxicity risk at high inclusion |
-| `vit_d3` | 150 | 2000 | `iu_kg` | |
-| `vit_e` | 11 | — | `iu_kg` | Higher practical inclusion (40–60 IU/kg common) |
-| `vit_b1` | 1.0 | — | `mg_kg` | Thiamin |
-| `vit_b2` | 3.0 | — | `mg_kg` | Riboflavin |
-| `vit_b3` | 20 | — | `mg_kg` | Niacin |
-| `vit_b5` | 12 | — | `mg_kg` | Pantothenic acid |
-| `vit_b6` | 1.5 | — | `mg_kg` | |
-| `vit_b7` | 0.05 | — | `mg_kg` | Biotin |
-| `vit_b9` | 0.30 | — | `mg_kg` | Folic acid |
-| `vit_b12` | 0.015 | — | `mg_kg` | Cobalamin |
-| `vit_choline` | 400 | — | `mg_kg` | |
+|-------------|---------|---------|---------|-------|
+| `ne_swine` | 2400  | —     | `kcal_kg` | NE for growth; NASEM 2022 basis |
+| `cp`       | 16.0  | —     | `pct` | Crude protein floor; AA-balanced diet can go lower |
+| `sid_lys`  | 0.90  | —     | `pct` | First-limiting AA; all other AA ratios relative to Lys |
+| `sid_met`  | 0.26  | —     | `pct` | ~29% of Lys (ideal protein ratio) |
+| `sid_thr`  | 0.58  | —     | `pct` | ~65% of Lys |
+| `sid_trp`  | 0.16  | —     | `pct` | ~18% of Lys |
+| `sid_val`  | 0.65  | —     | `pct` | ~72% of Lys |
+| `sid_ile`  | 0.55  | —     | `pct` | |
+| `ca`       | 0.59  | 0.90  | `pct` | Maximum set to limit Ca:STTD-P ratio |
+| `p_sttd`   | 0.29  | —     | `pct` | STTD Phosphorus; phytase credit applies |
+| `na`       | 0.18  | 0.25  | `pct` | |
+| `cl`       | 0.16  | —     | `pct` | |
+| `mg`       | 0.04  | —     | `pct` | |
+| `k`        | 0.23  | —     | `pct` | |
+| `fe`       | 80    | —     | `mg_kg` | |
+| `mn`       | 4     | —     | `mg_kg` | |
+| `zn`       | 80    | —     | `mg_kg` | |
+| `cu`       | 5     | 250   | `mg_kg` | Max varies by country/growth-promotion rules |
+| `se`       | 0.30  | 0.50  | `mg_kg` | Regulatory max 0.5 mg/kg (US FDA) |
+| `iod`      | 0.35  | —     | `mg_kg` | |
+| `vit_a`    | 1300  | 13000 | `iu_kg` | Toxicity risk at high inclusion |
+| `vit_d3`   | 150   | 2000  | `iu_kg` | |
+| `vit_e`    | 11    | —     | `iu_kg` | Higher practical inclusion (40–60 IU/kg common) |
+| `vit_b1`   | 1.0   | —     | `mg_kg` | Thiamin |
+| `vit_b2`   | 3.0   | —     | `mg_kg` | Riboflavin |
+| `vit_b3`   | 20    | —     | `mg_kg` | Niacin |
+| `vit_b5`   | 12    | —     | `mg_kg` | Pantothenic acid |
+| `vit_b6`   | 1.5   | —     | `mg_kg` | |
+| `vit_b7`   | 0.05  | —     | `mg_kg` | Biotin |
+| `vit_b9`   | 0.30  | —     | `mg_kg` | Folic acid |
+| `vit_b12`  | 0.015 | —     | `mg_kg` | Cobalamin |
+| `choline`  | 400   | —     | `mg_kg` | |
 
 ---
 
@@ -450,24 +503,24 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_nem_beef` | 1.18 | — | `mcal_kg` | NE maintenance; Mcal/kg DM |
-| `energy_neg_beef` | 0.74 | — | `mcal_kg` | NE gain; Mcal/kg DM |
-| `prox_cp` | 12.5 | — | `pct` | CP; MP system preferred in NASEM |
-| `rumen_rdp_pct_cp` | 60 | — | `pct` | RDP % of CP (rumen microbial requirement) |
-| `rumen_rup_pct_cp` | 40 | — | `pct` | RUP % of CP (bypass protein) |
-| `min_ca` | 0.28 | — | `pct` | |
-| `min_p_total` | 0.22 | — | `pct` | Total P; digestible P preferred in NASEM |
-| `min_na` | 0.08 | — | `pct` | |
-| `min_mg` | 0.10 | — | `pct` | |
-| `min_k` | 0.60 | — | `pct` | |
-| `min_s` | 0.10 | 0.40 | `pct` | Max 0.4% DM; above this → PEM risk |
-| `min_fe` | 50 | — | `mg_kg` | |
-| `min_mn` | 20 | — | `mg_kg` | |
-| `min_zn` | 30 | — | `mg_kg` | |
-| `min_cu` | 10 | — | `mg_kg` | Cattle tolerate much higher Cu than sheep |
-| `min_se` | 0.10 | 3.0 | `mg_kg` | FDA max 3 mg/kg DM (total diet) |
-| `min_i` | 0.50 | — | `mg_kg` | |
-| `min_co` | 0.10 | — | `mg_kg` | Needed for rumen microbial Vit B12 synthesis |
+| `nem_beef` | 1.18 | — | `mcal_kg` | NE maintenance; Mcal/kg DM |
+| `neg_beef` | 0.74 | — | `mcal_kg` | NE gain; Mcal/kg DM |
+| `cp` | 12.5 | — | `pct` | CP; MP system preferred in NASEM |
+| `rdp_pct_cp` | 60 | — | `pct` | RDP % of CP (rumen microbial requirement) |
+| `rup_pct_cp` | 40 | — | `pct` | RUP % of CP (bypass protein) |
+| `ca` | 0.28 | — | `pct` | |
+| `p_total` | 0.22 | — | `pct` | Total P; digestible P preferred in NASEM |
+| `na` | 0.08 | — | `pct` | |
+| `mg` | 0.10 | — | `pct` | |
+| `k` | 0.60 | — | `pct` | |
+| `s` | 0.10 | 0.40 | `pct` | Max 0.4% DM; above this → PEM risk |
+| `fe` | 50 | — | `mg_kg` | |
+| `mn` | 20 | — | `mg_kg` | |
+| `zn` | 30 | — | `mg_kg` | |
+| `cu` | 10 | — | `mg_kg` | Cattle tolerate much higher Cu than sheep |
+| `se` | 0.10 | 3.0 | `mg_kg` | FDA max 3 mg/kg DM (total diet) |
+| `iod` | 0.50 | — | `mg_kg` | |
+| `co` | 0.10 | — | `mg_kg` | Needed for rumen microbial Vit B12 synthesis |
 | `vit_a` | 2200 | — | `iu_kg` | |
 | `vit_d3` | 275 | — | `iu_kg` | |
 | `vit_e` | 15 | — | `iu_kg` | Higher at weaning / stress periods |
@@ -481,27 +534,27 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_nel_dairy` | 1.54 | — | `mcal_kg` | NEL Mcal/kg DM; high-production diet |
-| `prox_cp` | 17.0 | 19.0 | `pct` | Upper limit to protect rumen N balance |
-| `rumen_rdp_pct_cp` | 62 | — | `pct` | RDP % of CP; fuels rumen microbes |
-| `rumen_rup_pct_cp` | 38 | — | `pct` | RUP % of CP; bypass protein |
-| `aa_lys_pct_mp` | 7.2 | — | `pct` | Lys as % of metabolizable protein |
-| `aa_met_pct_mp` | 2.4 | — | `pct` | Met as % of MP; first limiting in most dairy diets |
-| `prox_ndf` | 28 | — | `pct` | Minimum NDF for rumen health |
-| `prox_adf` | 19 | — | `pct` | Minimum ADF |
-| `min_ca` | 0.65 | — | `pct` | Higher during lactation |
-| `min_p_total` | 0.32 | 0.38 | `pct` | Excess P creates manure N/P imbalances |
-| `min_mg` | 0.25 | — | `pct` | Higher during transition (0.35%) |
-| `min_k` | 1.0 | 1.5 | `pct` | Limit pre-calving to control DCAD |
-| `min_na` | 0.22 | — | `pct` | |
-| `min_cl` | 0.25 | — | `pct` | Important in DCAD calculation |
-| `min_s` | 0.20 | 0.40 | `pct` | Max 0.4% as with beef |
-| `min_mn` | 40 | — | `mg_kg` | |
-| `min_zn` | 55 | — | `mg_kg` | |
-| `min_cu` | 11 | — | `mg_kg` | |
-| `min_se` | 0.30 | 0.50 | `mg_kg` | |
-| `min_co` | 0.11 | — | `mg_kg` | |
-| `min_i` | 0.60 | — | `mg_kg` | |
+| `nel_dairy` | 1.54 | — | `mcal_kg` | NEL Mcal/kg DM; high-production diet |
+| `cp` | 17.0 | 19.0 | `pct` | Upper limit to protect rumen N balance |
+| `rdp_pct_cp` | 62 | — | `pct` | RDP % of CP; fuels rumen microbes |
+| `rup_pct_cp` | 38 | — | `pct` | RUP % of CP; bypass protein |
+| `lys_pct_mp` | 7.2 | — | `pct` | Lys as % of metabolizable protein |
+| `met_pct_mp` | 2.4 | — | `pct` | Met as % of MP; first limiting in most dairy diets |
+| `ndf` | 28 | — | `pct` | Minimum NDF for rumen health |
+| `adf` | 19 | — | `pct` | Minimum ADF |
+| `ca` | 0.65 | — | `pct` | Higher during lactation |
+| `p_total` | 0.32 | 0.38 | `pct` | Excess P creates manure N/P imbalances |
+| `mg` | 0.25 | — | `pct` | Higher during transition (0.35%) |
+| `k` | 1.0 | 1.5 | `pct` | Limit pre-calving to control DCAD |
+| `na` | 0.22 | — | `pct` | |
+| `cl` | 0.25 | — | `pct` | Important in DCAD calculation |
+| `s` | 0.20 | 0.40 | `pct` | Max 0.4% as with beef |
+| `mn` | 40 | — | `mg_kg` | |
+| `zn` | 55 | — | `mg_kg` | |
+| `cu` | 11 | — | `mg_kg` | |
+| `se` | 0.30 | 0.50 | `mg_kg` | |
+| `co` | 0.11 | — | `mg_kg` | |
+| `iod` | 0.60 | — | `mg_kg` | |
 | `vit_a` | 3000 | — | `iu_kg` | ~75,000 IU/cow/day for high-producing cows |
 | `vit_d3` | 1000 | — | `iu_kg` | ~30,000 IU/cow/day |
 | `vit_e` | 80 | — | `iu_kg` | Much higher at transition (~1,000 IU/day) |
@@ -515,21 +568,21 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_me_sheep` | 2.10 | — | `mcal_kg` | ME, Mcal/kg as-fed |
-| `prox_cp` | 10.0 | — | `pct` | |
-| `min_ca` | 0.28 | — | `pct` | |
-| `min_p_total` | 0.21 | — | `pct` | |
-| `min_na` | 0.09 | — | `pct` | |
-| `min_mg` | 0.18 | — | `pct` | |
-| `min_k` | 0.50 | — | `pct` | |
-| `min_s` | 0.14 | 0.32 | `pct` | |
-| `min_fe` | 30 | — | `mg_kg` | |
-| `min_mn` | 20 | — | `mg_kg` | |
-| `min_zn` | 20 | — | `mg_kg` | |
-| `min_cu` | 5 | 10 | `mg_kg` | CRITICAL: sheep are extremely Cu-sensitive |
-| `min_se` | 0.10 | 0.30 | `mg_kg` | |
-| `min_i` | 0.25 | — | `mg_kg` | |
-| `min_co` | 0.10 | — | `mg_kg` | Needed for microbial Vit B12 |
+| `me_sheep` | 2.10 | — | `mcal_kg` | ME, Mcal/kg as-fed |
+| `cp` | 10.0 | — | `pct` | |
+| `ca` | 0.28 | — | `pct` | |
+| `p_total` | 0.21 | — | `pct` | |
+| `na` | 0.09 | — | `pct` | |
+| `mg` | 0.18 | — | `pct` | |
+| `k` | 0.50 | — | `pct` | |
+| `s` | 0.14 | 0.32 | `pct` | |
+| `fe` | 30 | — | `mg_kg` | |
+| `mn` | 20 | — | `mg_kg` | |
+| `zn` | 20 | — | `mg_kg` | |
+| `cu` | 5 | 10 | `mg_kg` | CRITICAL: sheep are extremely Cu-sensitive |
+| `se` | 0.10 | 0.30 | `mg_kg` | |
+| `iod` | 0.25 | — | `mg_kg` | |
+| `co` | 0.10 | — | `mg_kg` | Needed for microbial Vit B12 |
 | `vit_a` | 2000 | — | `iu_kg` | |
 | `vit_d3` | 250 | — | `iu_kg` | |
 | `vit_e` | 15 | — | `iu_kg` | |
@@ -543,26 +596,26 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_amen_poultry` | 2850 | — | `kcal_kg` | AMEn, kcal/kg as-fed |
-| `prox_cp` | 16.0 | — | `pct` | |
-| `aa_dig_lys_poultry` | 0.88 | — | `pct` | Digestible Lys; first-limiting in corn-SBM |
-| `aa_dig_met_poultry` | 0.38 | — | `pct` | Digestible Met |
-| `aa_dig_methcys_poultry` | 0.68 | — | `pct` | Digestible Met + Cys combined |
-| `aa_dig_thr_poultry` | 0.56 | — | `pct` | |
-| `aa_dig_trp_poultry` | 0.14 | — | `pct` | |
-| `aa_dig_arg_poultry` | 0.88 | — | `pct` | |
-| `min_ca` | 4.00 | 4.50 | `pct` | Very high: eggshell formation |
-| `min_p_npp` | 0.30 | — | `pct` | Non-phytate-digestible P |
-| `min_na` | 0.18 | 0.22 | `pct` | Excess Na reduces egg weight |
-| `min_cl` | 0.15 | 0.20 | `pct` | |
-| `min_mg` | 0.05 | 0.30 | `pct` | High Mg reduces shell quality |
-| `min_k` | 0.40 | — | `pct` | |
-| `min_fe` | 50 | — | `mg_kg` | |
-| `min_mn` | 80 | — | `mg_kg` | Higher than many terrestrial species |
-| `min_zn` | 60 | — | `mg_kg` | |
-| `min_cu` | 6 | — | `mg_kg` | |
-| `min_se` | 0.30 | — | `mg_kg` | |
-| `min_i` | 0.40 | — | `mg_kg` | |
+| `amen_poultry` | 2850 | — | `kcal_kg` | AMEn, kcal/kg as-fed |
+| `cp` | 16.0 | — | `pct` | |
+| `dig_lys` | 0.88 | — | `pct` | Digestible Lys; first-limiting in corn-SBM |
+| `dig_met` | 0.38 | — | `pct` | Digestible Met |
+| `dig_methcys` | 0.68 | — | `pct` | Digestible Met + Cys combined |
+| `dig_thr` | 0.56 | — | `pct` | |
+| `dig_trp` | 0.14 | — | `pct` | |
+| `dig_arg` | 0.88 | — | `pct` | |
+| `ca` | 4.00 | 4.50 | `pct` | Very high: eggshell formation |
+| `p_npp` | 0.30 | — | `pct` | Non-phytate-digestible P |
+| `na` | 0.18 | 0.22 | `pct` | Excess Na reduces egg weight |
+| `cl` | 0.15 | 0.20 | `pct` | |
+| `mg` | 0.05 | 0.30 | `pct` | High Mg reduces shell quality |
+| `k` | 0.40 | — | `pct` | |
+| `fe` | 50 | — | `mg_kg` | |
+| `mn` | 80 | — | `mg_kg` | Higher than many terrestrial species |
+| `zn` | 60 | — | `mg_kg` | |
+| `cu` | 6 | — | `mg_kg` | |
+| `se` | 0.30 | — | `mg_kg` | |
+| `iod` | 0.40 | — | `mg_kg` | |
 | `vit_a` | 8000 | — | `iu_kg` | |
 | `vit_d3` | 2500 | — | `iu_kg` | D3 only for poultry; D2 largely inactive |
 | `vit_e` | 20 | — | `iu_kg` | |
@@ -574,7 +627,7 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 | `vit_b7` | 0.15 | — | `mg_kg` | Biotin |
 | `vit_b9` | 1.5 | — | `mg_kg` | Folic acid |
 | `vit_b12` | 0.010 | — | `mg_kg` | |
-| `vit_choline` | 1050 | — | `mg_kg` | |
+| `choline` | 1050 | — | `mg_kg` | |
 
 ---
 
@@ -585,24 +638,24 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_amen_poultry` | 3050 | — | `kcal_kg` | High-energy starter |
-| `prox_cp` | 22.0 | — | `pct` | |
-| `aa_dig_lys_poultry` | 1.35 | — | `pct` | |
-| `aa_dig_met_poultry` | 0.58 | — | `pct` | |
-| `aa_dig_methcys_poultry` | 1.05 | — | `pct` | |
-| `aa_dig_thr_poultry` | 0.88 | — | `pct` | |
-| `aa_dig_trp_poultry` | 0.22 | — | `pct` | |
-| `aa_dig_val_poultry` | 0.98 | — | `pct` | |
-| `aa_dig_ile_poultry` | 0.83 | — | `pct` | |
-| `min_ca` | 0.96 | — | `pct` | Much lower than layers |
-| `min_p_npp` | 0.48 | — | `pct` | |
-| `min_na` | 0.20 | — | `pct` | |
-| `min_cl` | 0.20 | — | `pct` | |
-| `min_mn` | 120 | — | `mg_kg` | Leg health |
-| `min_zn` | 80 | — | `mg_kg` | |
-| `min_cu` | 16 | — | `mg_kg` | |
-| `min_se` | 0.30 | — | `mg_kg` | |
-| `min_i` | 0.50 | — | `mg_kg` | |
+| `amen_poultry` | 3050 | — | `kcal_kg` | High-energy starter |
+| `cp` | 22.0 | — | `pct` | |
+| `dig_lys` | 1.35 | — | `pct` | |
+| `dig_met` | 0.58 | — | `pct` | |
+| `dig_methcys` | 1.05 | — | `pct` | |
+| `dig_thr` | 0.88 | — | `pct` | |
+| `dig_trp` | 0.22 | — | `pct` | |
+| `dig_val` | 0.98 | — | `pct` | |
+| `dig_ile` | 0.83 | — | `pct` | |
+| `ca` | 0.96 | — | `pct` | Much lower than layers |
+| `p_npp` | 0.48 | — | `pct` | |
+| `na` | 0.20 | — | `pct` | |
+| `cl` | 0.20 | — | `pct` | |
+| `mn` | 120 | — | `mg_kg` | Leg health |
+| `zn` | 80 | — | `mg_kg` | |
+| `cu` | 16 | — | `mg_kg` | |
+| `se` | 0.30 | — | `mg_kg` | |
+| `iod` | 0.50 | — | `mg_kg` | |
 | `vit_a` | 10000 | — | `iu_kg` | |
 | `vit_d3` | 3500 | — | `iu_kg` | |
 | `vit_e` | 30 | — | `iu_kg` | |
@@ -610,7 +663,7 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 | `vit_b2` | 6.0 | — | `mg_kg` | |
 | `vit_b3` | 55 | — | `mg_kg` | Niacin; high for broilers |
 | `vit_b5` | 16 | — | `mg_kg` | |
-| `vit_choline` | 1400 | — | `mg_kg` | |
+| `choline` | 1400 | — | `mg_kg` | |
 
 ---
 
@@ -621,23 +674,23 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_amen_poultry` | 2900 | — | `kcal_kg` | |
-| `prox_cp` | 28.0 | — | `pct` | Highest CP of any common monogastric class |
-| `aa_dig_lys_poultry` | 1.75 | — | `pct` | |
-| `aa_dig_met_poultry` | 0.62 | — | `pct` | |
-| `aa_dig_methcys_poultry` | 1.10 | — | `pct` | |
-| `aa_dig_thr_poultry` | 1.02 | — | `pct` | |
-| `aa_dig_trp_poultry` | 0.26 | — | `pct` | |
-| `aa_dig_val_poultry` | 1.15 | — | `pct` | |
-| `min_ca` | 1.20 | — | `pct` | |
-| `min_p_npp` | 0.60 | — | `pct` | |
-| `min_na` | 0.20 | — | `pct` | |
-| `min_cl` | 0.20 | — | `pct` | |
-| `min_mn` | 130 | — | `mg_kg` | Highest of all poultry classes |
-| `min_zn` | 85 | — | `mg_kg` | |
-| `min_cu` | 8 | — | `mg_kg` | |
-| `min_se` | 0.30 | — | `mg_kg` | |
-| `min_i` | 0.45 | — | `mg_kg` | |
+| `amen_poultry` | 2900 | — | `kcal_kg` | |
+| `cp` | 28.0 | — | `pct` | Highest CP of any common monogastric class |
+| `dig_lys` | 1.75 | — | `pct` | |
+| `dig_met` | 0.62 | — | `pct` | |
+| `dig_methcys` | 1.10 | — | `pct` | |
+| `dig_thr` | 1.02 | — | `pct` | |
+| `dig_trp` | 0.26 | — | `pct` | |
+| `dig_val` | 1.15 | — | `pct` | |
+| `ca` | 1.20 | — | `pct` | |
+| `p_npp` | 0.60 | — | `pct` | |
+| `na` | 0.20 | — | `pct` | |
+| `cl` | 0.20 | — | `pct` | |
+| `mn` | 130 | — | `mg_kg` | Highest of all poultry classes |
+| `zn` | 85 | — | `mg_kg` | |
+| `cu` | 8 | — | `mg_kg` | |
+| `se` | 0.30 | — | `mg_kg` | |
+| `iod` | 0.45 | — | `mg_kg` | |
 | `vit_a` | 12000 | — | `iu_kg` | |
 | `vit_d3` | 3500 | — | `iu_kg` | |
 | `vit_e` | 30 | — | `iu_kg` | |
@@ -645,7 +698,7 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 | `vit_b3` | 70 | — | `mg_kg` | Niacin; highest of all poultry (cannot convert Trp) |
 | `vit_b6` | 5.5 | — | `mg_kg` | High; deficiency → convulsions in poults |
 | `vit_b5` | 18 | — | `mg_kg` | Pantothenic acid |
-| `vit_choline` | 1900 | — | `mg_kg` | |
+| `choline` | 1900 | — | `mg_kg` | |
 
 ---
 
@@ -656,27 +709,27 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_me_companion` | 3500 | — | `kcal_kg` | ME kcal/kg as-fed (dry food) |
-| `prox_cp` | 26.0 | — | `pct` | Much higher minimum than dogs |
-| `aa_dig_arg` | 1.10 | — | `pct` | CRITICAL: hyperammonemia risk without Arg |
-| `aa_dig_lys` | 0.85 | — | `pct` | |
-| `aa_dig_met` | 0.40 | — | `pct` | |
-| `aa_dig_methcys` | 0.75 | — | `pct` | |
-| `aa_taurine` | 1000 | — | `mg_kg` | Dry food; 2500 mg/kg for wet food |
+| `me_companion` | 3500 | — | `kcal_kg` | ME kcal/kg as-fed (dry food) |
+| `cp` | 26.0 | — | `pct` | Much higher minimum than dogs |
+| `dig_arg` | 1.10 | — | `pct` | CRITICAL: hyperammonemia risk without Arg |
+| `dig_lys` | 0.85 | — | `pct` | |
+| `dig_met` | 0.40 | — | `pct` | |
+| `dig_methcys` | 0.75 | — | `pct` | |
+| `taurine` | 1000 | — | `mg_kg` | Dry food; 2500 mg/kg for wet food |
 | `fa_aa` | 0.020 | — | `pct` | Arachidonic acid; cannot synthesize from LA |
 | `fa_la` | 0.55 | — | `pct` | Linoleic acid |
-| `min_ca` | 0.60 | — | `pct` | |
-| `min_p_total` | 0.50 | — | `pct` | Ca:P must be 1.0–1.5:1 (constraint term) |
-| `min_na` | 0.20 | — | `pct` | |
-| `min_cl` | 0.30 | — | `pct` | |
-| `min_mg` | 0.04 | 0.10 | `pct` | Upper limit for urinary health |
-| `min_k` | 0.60 | — | `pct` | |
-| `min_fe` | 80 | — | `mg_kg` | |
-| `min_mn` | 7.5 | — | `mg_kg` | |
-| `min_zn` | 75 | — | `mg_kg` | |
-| `min_cu` | 5 | — | `mg_kg` | |
-| `min_se` | 0.10 | — | `mg_kg` | |
-| `min_i` | 0.35 | — | `mg_kg` | |
+| `ca` | 0.60 | — | `pct` | |
+| `p_total` | 0.50 | — | `pct` | Ca:P must be 1.0–1.5:1 (constraint term) |
+| `na` | 0.20 | — | `pct` | |
+| `cl` | 0.30 | — | `pct` | |
+| `mg` | 0.04 | 0.10 | `pct` | Upper limit for urinary health |
+| `k` | 0.60 | — | `pct` | |
+| `fe` | 80 | — | `mg_kg` | |
+| `mn` | 7.5 | — | `mg_kg` | |
+| `zn` | 75 | — | `mg_kg` | |
+| `cu` | 5 | — | `mg_kg` | |
+| `se` | 0.10 | — | `mg_kg` | |
+| `iod` | 0.35 | — | `mg_kg` | |
 | `vit_a` | 3333 | 100000 | `iu_kg` | Preformed retinol only (cannot use beta-carotene) |
 | `vit_d3` | 280 | 30000 | `iu_kg` | Narrower safety margin than dogs |
 | `vit_e` | 30 | — | `iu_kg` | |
@@ -689,7 +742,7 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 | `vit_b7` | 0.07 | — | `mg_kg` | |
 | `vit_b9` | 0.80 | — | `mg_kg` | |
 | `vit_b12` | 0.022 | — | `mg_kg` | |
-| `vit_choline` | 2400 | — | `mg_kg` | Cats have very high choline requirement |
+| `choline` | 2400 | — | `mg_kg` | Cats have very high choline requirement |
 
 ---
 
@@ -700,29 +753,29 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_me_companion` | 3500 | — | `kcal_kg` | ME kcal/kg as-fed |
-| `prox_cp` | 18.0 | — | `pct` | |
-| `aa_dig_arg` | 0.55 | — | `pct` | |
-| `aa_dig_lys` | 0.63 | — | `pct` | |
-| `aa_dig_met` | 0.33 | — | `pct` | |
-| `aa_dig_methcys` | 0.65 | — | `pct` | |
-| `aa_dig_thr` | 0.48 | — | `pct` | |
-| `aa_dig_trp` | 0.16 | — | `pct` | |
+| `me_companion` | 3500 | — | `kcal_kg` | ME kcal/kg as-fed |
+| `cp` | 18.0 | — | `pct` | |
+| `dig_arg` | 0.55 | — | `pct` | |
+| `dig_lys` | 0.63 | — | `pct` | |
+| `dig_met` | 0.33 | — | `pct` | |
+| `dig_methcys` | 0.65 | — | `pct` | |
+| `dig_thr` | 0.48 | — | `pct` | |
+| `dig_trp` | 0.16 | — | `pct` | |
 | `fa_la` | 1.10 | — | `pct` | Linoleic acid; essential |
 | `fa_ala` | 0.044 | — | `pct` | Alpha-linolenic acid |
 | `fa_epa_dha` | 0.11 | — | `pct` | Combined EPA + DHA preferred over ALA |
-| `min_ca` | 0.50 | — | `pct` | Ca:P 1.0–1.8:1 via constraint_terms |
-| `min_p_total` | 0.40 | — | `pct` | |
-| `min_na` | 0.20 | — | `pct` | |
-| `min_cl` | 0.30 | — | `pct` | |
-| `min_mg` | 0.06 | — | `pct` | |
-| `min_k` | 0.60 | — | `pct` | |
-| `min_fe` | 80 | — | `mg_kg` | |
-| `min_mn` | 5.0 | — | `mg_kg` | |
-| `min_zn` | 120 | — | `mg_kg` | High; phytate reduces bioavailability |
-| `min_cu` | 7.3 | — | `mg_kg` | |
-| `min_se` | 0.11 | — | `mg_kg` | |
-| `min_i` | 1.5 | — | `mg_kg` | |
+| `ca` | 0.50 | — | `pct` | Ca:P 1.0–1.8:1 via constraint_terms |
+| `p_total` | 0.40 | — | `pct` | |
+| `na` | 0.20 | — | `pct` | |
+| `cl` | 0.30 | — | `pct` | |
+| `mg` | 0.06 | — | `pct` | |
+| `k` | 0.60 | — | `pct` | |
+| `fe` | 80 | — | `mg_kg` | |
+| `mn` | 5.0 | — | `mg_kg` | |
+| `zn` | 120 | — | `mg_kg` | High; phytate reduces bioavailability |
+| `cu` | 7.3 | — | `mg_kg` | |
+| `se` | 0.11 | — | `mg_kg` | |
+| `iod` | 1.5 | — | `mg_kg` | |
 | `vit_a` | 5000 | 250000 | `iu_kg` | Upper limit important for dogs |
 | `vit_d3` | 500 | 3000 | `iu_kg` | Toxicity threshold is close to requirement |
 | `vit_e` | 50 | — | `iu_kg` | |
@@ -735,7 +788,7 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 | `vit_b7` | 0.23 | — | `mg_kg` | Biotin |
 | `vit_b9` | 0.27 | — | `mg_kg` | Folic acid |
 | `vit_b12` | 0.035 | — | `mg_kg` | |
-| `vit_choline` | 1700 | — | `mg_kg` | |
+| `choline` | 1700 | — | `mg_kg` | |
 
 ---
 
@@ -746,23 +799,23 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_me_goat` | 2.6 | — | `mcal_kg` | ME Mcal/kg DM |
-| `prox_cp` | 15.5 | — | `pct` | |
-| `rumen_rdp_pct_cp` | 66 | — | `pct` | |
-| `rumen_rup_pct_cp` | 34 | — | `pct` | |
-| `min_ca` | 0.60 | — | `pct` | |
-| `min_p_total` | 0.40 | — | `pct` | |
-| `min_mg` | 0.22 | — | `pct` | |
-| `min_k` | 0.65 | — | `pct` | |
-| `min_na` | 0.18 | — | `pct` | |
-| `min_s` | 0.18 | 0.40 | `pct` | |
-| `min_fe` | 35 | — | `mg_kg` | |
-| `min_mn` | 30 | — | `mg_kg` | |
-| `min_zn` | 45 | — | `mg_kg` | |
-| `min_cu` | 12 | — | `mg_kg` | Goats tolerate much higher Cu than sheep |
-| `min_se` | 0.15 | 0.50 | `mg_kg` | |
-| `min_i` | 0.60 | — | `mg_kg` | |
-| `min_co` | 0.10 | — | `mg_kg` | |
+| `me_goat` | 2.6 | — | `mcal_kg` | ME Mcal/kg DM |
+| `cp` | 15.5 | — | `pct` | |
+| `rdp_pct_cp` | 66 | — | `pct` | |
+| `rup_pct_cp` | 34 | — | `pct` | |
+| `ca` | 0.60 | — | `pct` | |
+| `p_total` | 0.40 | — | `pct` | |
+| `mg` | 0.22 | — | `pct` | |
+| `k` | 0.65 | — | `pct` | |
+| `na` | 0.18 | — | `pct` | |
+| `s` | 0.18 | 0.40 | `pct` | |
+| `fe` | 35 | — | `mg_kg` | |
+| `mn` | 30 | — | `mg_kg` | |
+| `zn` | 45 | — | `mg_kg` | |
+| `cu` | 12 | — | `mg_kg` | Goats tolerate much higher Cu than sheep |
+| `se` | 0.15 | 0.50 | `mg_kg` | |
+| `iod` | 0.60 | — | `mg_kg` | |
+| `co` | 0.10 | — | `mg_kg` | |
 | `vit_a` | 2500 | — | `iu_kg` | |
 | `vit_d3` | 400 | — | `iu_kg` | |
 | `vit_e` | 20 | — | `iu_kg` | |
@@ -776,27 +829,27 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 | nutrient_id | req_min | req_max | unit_id | notes |
 |---|---|---|---|---|
-| `energy_de_salmon` | 3700 | — | `kcal_kg` | Digestible energy kcal/kg as-fed |
-| `prox_cp` | 38.0 | — | `pct` | Very high protein vs terrestrial species |
-| `prox_fat` | 26.0 | 34.0 | `pct` | Modern high-fat diets; upper limit practical |
-| `aa_dig_lys_fish` | 2.3 | — | `pct` | High due to high inclusion rates |
-| `aa_dig_met_fish` | 0.8 | — | `pct` | |
-| `aa_dig_methcys_fish` | 1.4 | — | `pct` | |
-| `aa_dig_thr_fish` | 1.4 | — | `pct` | |
-| `aa_dig_arg_fish` | 2.0 | — | `pct` | |
-| `aa_dig_val_fish` | 1.6 | — | `pct` | |
+| `de_salmon` | 3700 | — | `kcal_kg` | Digestible energy kcal/kg as-fed |
+| `cp` | 38.0 | — | `pct` | Very high protein vs terrestrial species |
+| `ee` | 26.0 | 34.0 | `pct` | Modern high-fat diets; upper limit practical |
+| `dig_lys_fish` | 2.3 | — | `pct` | High due to high inclusion rates |
+| `dig_met_fish` | 0.8 | — | `pct` | |
+| `dig_methcys_fish` | 1.4 | — | `pct` | |
+| `dig_thr_fish` | 1.4 | — | `pct` | |
+| `dig_arg_fish` | 2.0 | — | `pct` | |
+| `dig_val_fish` | 1.6 | — | `pct` | |
 | `fa_epa_dha` | 2.0 | — | `pct` | EPA + DHA; critical for growth and health |
 | `fa_la` | 0.5 | — | `pct` | Linoleic acid (omega-6) |
-| `min_ca` | 0.17 | — | `pct` | Fish absorb Ca from water |
-| `min_p_total` | 1.0 | — | `pct` | |
-| `min_p_dig` | 0.50 | — | `pct` | Digestible P; excess → water quality issues |
-| `min_mg` | 0.05 | — | `pct` | |
-| `min_fe` | 30 | — | `mg_kg` | |
-| `min_mn` | 10 | — | `mg_kg` | |
-| `min_zn` | 30 | — | `mg_kg` | |
-| `min_cu` | 5 | — | `mg_kg` | |
-| `min_se` | 0.25 | — | `mg_kg` | |
-| `min_i` | 0.50 | — | `mg_kg` | |
+| `ca` | 0.17 | — | `pct` | Fish absorb Ca from water |
+| `p_total` | 1.0 | — | `pct` | |
+| `p_dig` | 0.50 | — | `pct` | Digestible P; excess → water quality issues |
+| `mg` | 0.05 | — | `pct` | |
+| `fe` | 30 | — | `mg_kg` | |
+| `mn` | 10 | — | `mg_kg` | |
+| `zn` | 30 | — | `mg_kg` | |
+| `cu` | 5 | — | `mg_kg` | |
+| `se` | 0.25 | — | `mg_kg` | |
+| `iod` | 0.50 | — | `mg_kg` | |
 | `vit_a` | 5000 | — | `iu_kg` | |
 | `vit_d3` | 2400 | — | `iu_kg` | |
 | `vit_e` | 100 | — | `mg_kg` | Much higher than terrestrial; important for flesh quality |
@@ -810,9 +863,9 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 | `vit_b7` | 1.5 | — | `mg_kg` | Biotin |
 | `vit_b9` | 6 | — | `mg_kg` | Folic acid |
 | `vit_b12` | 0.02 | — | `mg_kg` | |
-| `vit_choline` | 800 | — | `mg_kg` | |
-| `vit_inositol` | 400 | — | `mg_kg` | Essential for fish; absent from terrestrial requirements |
-| `pigment_astaxanthin` | 50 | 80 | `mg_kg` | Market requirement (flesh color), not nutritional |
+| `choline` | 800 | — | `mg_kg` | |
+| `inositol` | 400 | — | `mg_kg` | Essential for fish; absent from terrestrial requirements |
+| `astaxanthin` | 50 | 80 | `mg_kg` | Market requirement (flesh color), not nutritional |
 
 ---
 
@@ -828,58 +881,58 @@ there. Below are the entries that need to be added for the multi-species scope o
 
 | nutrient_id | display_name | nutrient_class | species | default_unit_id | basis |
 |---|---|---|---|---|---|
-| `energy_ne_swine` | Net Energy (Swine) | energy | swine | kcal_kg | as_fed |
-| `energy_me_swine` | Metabolizable Energy (Swine) | energy | swine | kcal_kg | as_fed |
-| `energy_de_swine` | Digestible Energy (Swine) | energy | swine | kcal_kg | as_fed |
-| `energy_nem_beef` | NE Maintenance (Beef) | energy | beef | mcal_kg | dry_matter |
-| `energy_neg_beef` | NE Gain (Beef) | energy | beef | mcal_kg | dry_matter |
-| `energy_me_beef` | Metabolizable Energy (Beef) | energy | beef | mcal_kg | dry_matter |
-| `energy_nel_dairy` | NE Lactation (Dairy) | energy | dairy | mcal_kg | dry_matter |
-| `energy_me_sheep` | Metabolizable Energy (Sheep) | energy | sheep | mcal_kg | as_fed |
-| `energy_amen_poultry` | AMEn (Poultry) | energy | poultry | kcal_kg | as_fed |
-| `energy_me_companion` | Metabolizable Energy (Companion) | energy | NULL | kcal_kg | as_fed |
-| `energy_me_goat` | Metabolizable Energy (Goat) | energy | dairy_goat | mcal_kg | dry_matter |
-| `energy_de_salmon` | Digestible Energy (Salmon) | energy | atlantic_salmon | kcal_kg | as_fed |
+| `ne_swine` | Net Energy (Swine) | energy | swine | kcal_kg | as_fed |
+| `me_swine` | Metabolizable Energy (Swine) | energy | swine | kcal_kg | as_fed |
+| `de_swine` | Digestible Energy (Swine) | energy | swine | kcal_kg | as_fed |
+| `nem_beef` | NE Maintenance (Beef) | energy | beef | mcal_kg | dry_matter |
+| `neg_beef` | NE Gain (Beef) | energy | beef | mcal_kg | dry_matter |
+| `me_beef` | Metabolizable Energy (Beef) | energy | beef | mcal_kg | dry_matter |
+| `nel_dairy` | NE Lactation (Dairy) | energy | dairy | mcal_kg | dry_matter |
+| `me_sheep` | Metabolizable Energy (Sheep) | energy | sheep | mcal_kg | as_fed |
+| `amen_poultry` | AMEn (Poultry) | energy | poultry | kcal_kg | as_fed |
+| `me_companion` | Metabolizable Energy (Companion) | energy | NULL | kcal_kg | as_fed |
+| `me_goat` | Metabolizable Energy (Goat) | energy | dairy_goat | mcal_kg | dry_matter |
+| `de_salmon` | Digestible Energy (Salmon) | energy | atlantic_salmon | kcal_kg | as_fed |
 
 ### Amino Acids
 
 | nutrient_id | display_name | nutrient_class | species |
 |---|---|---|---|
-| `aa_sid_lys` | SID Lysine | amino_acid | swine |
-| `aa_sid_met` | SID Methionine | amino_acid | swine |
-| `aa_sid_thr` | SID Threonine | amino_acid | swine |
-| `aa_sid_trp` | SID Tryptophan | amino_acid | swine |
-| `aa_sid_val` | SID Valine | amino_acid | swine |
-| `aa_sid_ile` | SID Isoleucine | amino_acid | swine |
-| `aa_sid_leu` | SID Leucine | amino_acid | swine |
-| `aa_sid_phe` | SID Phenylalanine | amino_acid | swine |
-| `aa_sid_his` | SID Histidine | amino_acid | swine |
-| `aa_sid_arg` | SID Arginine | amino_acid | swine |
-| `aa_dig_lys_poultry` | Digestible Lysine (Poultry) | amino_acid | poultry |
-| `aa_dig_met_poultry` | Digestible Methionine (Poultry) | amino_acid | poultry |
-| `aa_dig_methcys_poultry` | Digestible Met+Cys (Poultry) | amino_acid | poultry |
-| `aa_dig_thr_poultry` | Digestible Threonine (Poultry) | amino_acid | poultry |
-| `aa_dig_trp_poultry` | Digestible Tryptophan (Poultry) | amino_acid | poultry |
-| `aa_dig_arg_poultry` | Digestible Arginine (Poultry) | amino_acid | poultry |
-| `aa_dig_val_poultry` | Digestible Valine (Poultry) | amino_acid | poultry |
-| `aa_dig_ile_poultry` | Digestible Isoleucine (Poultry) | amino_acid | poultry |
-| `aa_lys_pct_mp` | Lysine as % of MP (Ruminants) | rumen_protein | dairy |
-| `aa_met_pct_mp` | Methionine as % of MP (Ruminants) | rumen_protein | dairy |
-| `aa_taurine` | Taurine | amino_acid | NULL |
-| `aa_dig_arg` | Digestible Arginine (Companion) | amino_acid | NULL |
-| `aa_dig_lys` | Digestible Lysine (Companion) | amino_acid | NULL |
-| `aa_dig_met` | Digestible Methionine (Companion) | amino_acid | NULL |
-| `aa_dig_methcys` | Digestible Met+Cys (Companion) | amino_acid | NULL |
-| `aa_dig_thr` | Digestible Threonine (Companion) | amino_acid | NULL |
-| `aa_dig_trp` | Digestible Tryptophan (Companion) | amino_acid | NULL |
-| `aa_dig_lys_fish` | Digestible Lysine (Fish) | amino_acid | atlantic_salmon |
-| `aa_dig_met_fish` | Digestible Methionine (Fish) | amino_acid | atlantic_salmon |
-| `aa_dig_methcys_fish` | Digestible Met+Cys (Fish) | amino_acid | atlantic_salmon |
-| `aa_dig_thr_fish` | Digestible Threonine (Fish) | amino_acid | atlantic_salmon |
-| `aa_dig_arg_fish` | Digestible Arginine (Fish) | amino_acid | atlantic_salmon |
-| `aa_dig_val_fish` | Digestible Valine (Fish) | amino_acid | atlantic_salmon |
-| `rumen_rdp_pct_cp` | RDP as % of CP | rumen_protein | NULL |
-| `rumen_rup_pct_cp` | RUP as % of CP | rumen_protein | NULL |
+| `sid_lys` | SID Lysine | amino_acid | swine |
+| `sid_met` | SID Methionine | amino_acid | swine |
+| `sid_thr` | SID Threonine | amino_acid | swine |
+| `sid_trp` | SID Tryptophan | amino_acid | swine |
+| `sid_val` | SID Valine | amino_acid | swine |
+| `sid_ile` | SID Isoleucine | amino_acid | swine |
+| `sid_leu` | SID Leucine | amino_acid | swine |
+| `sid_phe` | SID Phenylalanine | amino_acid | swine |
+| `sid_his` | SID Histidine | amino_acid | swine |
+| `sid_arg` | SID Arginine | amino_acid | swine |
+| `dig_lys` | Digestible Lysine (Poultry) | amino_acid | poultry |
+| `dig_met` | Digestible Methionine (Poultry) | amino_acid | poultry |
+| `dig_methcys` | Digestible Met+Cys (Poultry) | amino_acid | poultry |
+| `dig_thr` | Digestible Threonine (Poultry) | amino_acid | poultry |
+| `dig_trp` | Digestible Tryptophan (Poultry) | amino_acid | poultry |
+| `dig_arg` | Digestible Arginine (Poultry) | amino_acid | poultry |
+| `dig_val` | Digestible Valine (Poultry) | amino_acid | poultry |
+| `dig_ile` | Digestible Isoleucine (Poultry) | amino_acid | poultry |
+| `lys_pct_mp` | Lysine as % of MP (Ruminants) | rumen_protein | dairy |
+| `met_pct_mp` | Methionine as % of MP (Ruminants) | rumen_protein | dairy |
+| `taurine` | Taurine | amino_acid | NULL |
+| `dig_arg` | Digestible Arginine (Companion) | amino_acid | NULL |
+| `dig_lys` | Digestible Lysine (Companion) | amino_acid | NULL |
+| `dig_met` | Digestible Methionine (Companion) | amino_acid | NULL |
+| `dig_methcys` | Digestible Met+Cys (Companion) | amino_acid | NULL |
+| `dig_thr` | Digestible Threonine (Companion) | amino_acid | NULL |
+| `dig_trp` | Digestible Tryptophan (Companion) | amino_acid | NULL |
+| `dig_lys_fish` | Digestible Lysine (Fish) | amino_acid | atlantic_salmon |
+| `dig_met_fish` | Digestible Methionine (Fish) | amino_acid | atlantic_salmon |
+| `dig_methcys_fish` | Digestible Met+Cys (Fish) | amino_acid | atlantic_salmon |
+| `dig_thr_fish` | Digestible Threonine (Fish) | amino_acid | atlantic_salmon |
+| `dig_arg_fish` | Digestible Arginine (Fish) | amino_acid | atlantic_salmon |
+| `dig_val_fish` | Digestible Valine (Fish) | amino_acid | atlantic_salmon |
+| `rdp_pct_cp` | RDP as % of CP | rumen_protein | NULL |
+| `rup_pct_cp` | RUP as % of CP | rumen_protein | NULL |
 
 ### Fatty Acids
 
@@ -894,11 +947,11 @@ there. Below are the entries that need to be added for the multi-species scope o
 
 | nutrient_id | display_name | nutrient_class | species |
 |---|---|---|---|
-| `min_p_total` | Total Phosphorus | mineral_macro | NULL |
-| `min_p_sttd` | STTD Phosphorus | mineral_macro | swine |
-| `min_p_npp` | Non-Phytate-Digestible P | mineral_macro | poultry |
-| `min_p_dig` | Digestible Phosphorus | mineral_macro | atlantic_salmon |
-| `min_p_avail` | Available Phosphorus (legacy) | mineral_macro | NULL |
+| `p_total` | Total Phosphorus | mineral_macro | NULL |
+| `p_sttd` | STTD Phosphorus | mineral_macro | swine |
+| `p_npp` | Non-Phytate-Digestible P | mineral_macro | poultry |
+| `p_dig` | Digestible Phosphorus | mineral_macro | atlantic_salmon |
+| `p_avail` | Available Phosphorus (legacy) | mineral_macro | NULL |
 
 ### Special Vitamins
 
@@ -906,13 +959,13 @@ there. Below are the entries that need to be added for the multi-species scope o
 |---|---|---|---|
 | `vit_c` | Vitamin C (Ascorbic Acid) | vitamin_water_soluble | NULL |
 | `vit_k1` | Vitamin K1 (Phylloquinone) | vitamin_fat_soluble | cat |
-| `vit_inositol` | Inositol | vitamin_water_soluble | atlantic_salmon |
+| `inositol` | Inositol | vitamin_water_soluble | atlantic_salmon |
 
 ### Pigments
 
 | nutrient_id | display_name | nutrient_class | species |
 |---|---|---|---|
-| `pigment_astaxanthin` | Astaxanthin | pigment | atlantic_salmon |
+| `astaxanthin` | Astaxanthin | pigment | atlantic_salmon |
 
 ---
 

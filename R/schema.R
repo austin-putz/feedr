@@ -181,7 +181,7 @@
 #' one-line descriptions for every object in the database.  Returns a
 #' `data.frame` invisibly so the result can also be used programmatically.
 #'
-#' @param .con A `feedr_session` created by [init_feedr_db()].
+#' @param .db_con A `feedr_session` created by [init_feedr_db()].
 #'
 #' @return A `data.frame` with columns `table_name`, `type`, `rows`, `cols`,
 #'   and `description`, returned invisibly.
@@ -196,9 +196,9 @@
 #' s <- schema(db)
 #' s$table_name
 #' }
-schema <- function(.con) {
+schema <- function(.db_con) {
 
-  if (!inherits(.con, "feedr_session")) {
+  if (!inherits(.db_con, "feedr_session")) {
     stop(
       "schema() requires a feedr_session.\n",
       "  Use: db |> schema()   where db <- init_feedr_db(...)",
@@ -206,7 +206,7 @@ schema <- function(.con) {
     )
   }
 
-  con <- .con$con
+  con <- .db_con$con
 
   all_names <- DBI::dbListTables(con)
   if (length(all_names) == 0L) {
@@ -264,7 +264,7 @@ schema <- function(.con) {
   footer      <- strrep("-", WIDE)
 
   cat(header, "\n")
-  cat("  Schema version :", .con$schema_version, "\n")
+  cat("  Schema version :", .db_con$schema_version, "\n")
   cat("  Tables         :", n_tables,            "\n")
   cat("  Views          :", n_views,             "\n")
   cat(footer, "\n\n")
@@ -318,7 +318,7 @@ schema <- function(.con) {
 #' and a one-line description.  Also prints the table description, row count,
 #' and total column count as a header.
 #'
-#' `.con` accepts either a `feedr_session` (pass `.table_name` explicitly) or
+#' `.db_con` accepts either a `feedr_session` (pass `.table_name` explicitly) or
 #' a `feedr_tbl` (`.table_name` is inferred automatically), so both of these
 #' workflows work:
 #'
@@ -327,9 +327,9 @@ schema <- function(.con) {
 #' db |> get_table("nutrients") |> describe_table()
 #' ```
 #'
-#' @param .con      A `feedr_session` or `feedr_tbl`.
+#' @param .db_con      A `feedr_session` or `feedr_tbl`.
 #' @param .table_name  Table or view name as a single string.  Required when
-#'   `.con` is a `feedr_session`; ignored (with a message) when `.con` is a
+#'   `.db_con` is a `feedr_session`; ignored (with a message) when `.db_con` is a
 #'   `feedr_tbl` and `.table_name` matches the tbl's own table.
 #'
 #' @return A `data.frame` with columns `column_name`, `type`, `nullable`,
@@ -350,18 +350,18 @@ schema <- function(.con) {
 #' cols <- db |> describe_table("ingredients")
 #' cols$column_name
 #' }
-describe_table <- function(.con, .table_name = NULL) {
+describe_table <- function(.db_con, .table_name = NULL) {
 
   # Resolve connection and table name
-  if (inherits(.con, "feedr_tbl")) {
-    con        <- .con$session$con
-    table_name <- if (is.null(.table_name)) .con$table_name else .table_name
-  } else if (inherits(.con, "feedr_session")) {
-    con        <- .con$con
+  if (inherits(.db_con, "feedr_tbl")) {
+    con        <- .db_con$session$con
+    table_name <- if (is.null(.table_name)) .db_con$table_name else .table_name
+  } else if (inherits(.db_con, "feedr_session")) {
+    con        <- .db_con$con
     table_name <- .table_name
   } else {
     stop(
-      "describe_table() requires a feedr_session or feedr_tbl as '.con'.",
+      "describe_table() requires a feedr_session or feedr_tbl as '.db_con'.",
       call. = FALSE
     )
   }
@@ -369,7 +369,7 @@ describe_table <- function(.con, .table_name = NULL) {
   if (is.null(table_name) || !is.character(table_name) ||
       length(table_name) != 1L || !nzchar(table_name)) {
     stop(
-      "'.table_name' must be a non-empty string when '.con' is a feedr_session.\n",
+      "'.table_name' must be a non-empty string when '.db_con' is a feedr_session.\n",
       "  Use: db |> describe_table('table_name')",
       call. = FALSE
     )

@@ -23,7 +23,7 @@ duplicates information already encoded in `feeding_phases`. The corrected schema
 
 **`nutrients` table already exists.** PLAN.md already defines a `nutrients` table that serves as
 the nutrient metadata registry — `nutrient_id`, `display_name`, `nutrient_class`, `species`,
-`default_unit_id`, `lp_unit_id`, `lower_is_better`, `description`. This is not a new table. The
+`default_unit_id`, `lp_unit_id`, `has_upper_bound_concern`, `description`. This is not a new table. The
 `nutrient_requirements` table FKs to it via `nutrient_id`. Section 6 of this document adds the
 specific `nutrient_id` rows needed for multi-species coverage.
 
@@ -65,7 +65,15 @@ CREATE TABLE nutrient_requirements (
                         REFERENCES nutrients(nutrient_id),
   requirement_min     DOUBLE,                                      -- lower bound (NULL = none)
   requirement_max     DOUBLE,                                      -- upper bound (NULL = none)
-  requirement_target  DOUBLE,                                      -- soft target for penalty formulation
+  requirement_target  DOUBLE,                                      -- ideal value for penalty formulation
+  min_strictness      VARCHAR DEFAULT 'hard',                      -- 'hard' | 'soft'
+  max_strictness      VARCHAR DEFAULT 'hard',                      -- 'hard' | 'soft'
+  penalty_min         DOUBLE,                                      -- objective cost per unit below
+                                                                   --   requirement_min (soft only)
+  penalty_max         DOUBLE,                                      -- objective cost per unit above
+                                                                   --   requirement_max (soft only)
+  penalty_target      DOUBLE,                                      -- objective cost per unit deviation
+                                                                   --   from requirement_target
   unit_id             VARCHAR NOT NULL                             -- FK → units
                         REFERENCES units(unit_id),
   basis               VARCHAR NOT NULL,                            -- "as_fed" or "dry_matter"
@@ -119,13 +127,74 @@ feedr |>
   diet_spec(basis = "as_fed")
 ```
 
+### Hard vs soft bounds
+
+`min_strictness` and `max_strictness` control how the LP solver treats each bound:
+
+| strictness | LP behavior | When to use |
+|---|---|---|
+| `'hard'` | Standard inequality constraint — solver returns infeasible if violated | Regulatory maxima (Se FDA), safety limits (Cu sheep), non-negotiable minimums |
+| `'soft'` | Slack variable added; `penalty` added to objective per unit of violation — solver can violate at a cost | Practical guidelines, NRC recommendations, quality targets that trade off against feed cost |
+
+**LP mechanics for soft bounds:**
+
+```
+# Hard min: A*x >= b  (infeasible if violated)
+
+# Soft min with penalty p:
+# introduce slack s >= 0
+# A*x + s >= b
+# minimize feed_cost + p * s
+# solver "buys" the shortfall when p < cost of meeting the constraint
+```
+
+The same structure applies to soft max (slack above the upper bound) and to
+`requirement_target` with `penalty_target` (symmetric penalty around the target value).
+
+**Choosing penalty magnitudes:** Penalties are in the same cost unit as the objective
+(USD per kg diet). A penalty of 0.10 USD/unit means the solver will accept a 1-unit
+shortfall rather than spend more than $0.10/kg to avoid it. Nutritionists can calibrate
+these interactively — start high (effectively hard) and lower until the diet cost
+improvement justifies the nutritional trade-off.
+
+**Practical examples:**
+
+| nutrient_id | req_min | min_strictness | penalty_min | rationale |
+|---|---|---|---|---|
+| `se` | 0.10 | `hard` | — | deficiency causes white muscle disease |
+| `se` | — | — | — | max row is separate (see FDA_reg source) |
+| `cp` | 16.0 | `soft` | 0.05 | if all AA constraints met, CP can relax at $0.05/kg cost |
+| `ne_swine` | 2400 | `hard` | — | energy minimum is non-negotiable for growth |
+| `ndf` | 28.0 | `soft` | 0.08 | rumen health guideline; dairy nutritionist may accept 27% |
+| `nel_dairy` | 1.54 | `hard` | — | lactating cow production minimum |
+| `sid_lys` | 0.90 | `hard` | — | first-limiting AA; deficiency immediately hits growth |
+
+**`requirement_target` with `penalty_target`:**
+
+A target is an ideal value the solver tries to hit, penalized symmetrically (or
+asymmetrically via separate `penalty_min` + `penalty_max` rows) for deviation. Useful for:
+- Energy density where you want exactly enough, not more (premix cost rises with energy)
+- Fat level where too low hurts palatability and too high wastes cost
+- NE in a phase where over-meeting energy densifies body fat rather than lean
+
+```r
+# Example: energy target with soft bounds
+# requirement_min = 2400, min_strictness = 'hard'   → must hit minimum
+# requirement_target = 2500, penalty_target = 0.02  → solver tries to hit 2500
+# requirement_max = 2700, max_strictness = 'soft', penalty_max = 0.03
+#   → can exceed 2700 but solver pays $0.03/kcal over
+```
+
 ### Other design rules
 
 - `basis` must always be explicit — never roll it into the unit name
 - Ratio constraints (Ca:P, Met:Lys) belong in `constraint_terms`, not here — this table stores
   single-nutrient min/max rows only
-- Package seed rows: `locked = TRUE`; user-defined rows: `locked = FALSE`
+- Package seed rows: `locked = TRUE`, `min_strictness = 'hard'`, `max_strictness = 'hard'`
+  by default; users can override strictness in their own rows
 - The UNIQUE constraint prevents duplicate rows for the same phase × set × nutrient × source × basis
+- A `NULL` penalty on a soft bound is a schema error — the LP builder must reject it with a
+  clear message: "min_strictness = 'soft' but no penalty_min set for nutrient X"
 
 ---
 
@@ -873,7 +942,7 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 
 The `nutrients` table is already defined in PLAN.md. It is the canonical nutrient metadata
 registry — `nutrient_id`, `display_name`, `nutrient_class`, `species`, `default_unit_id`,
-`lp_unit_id`, `lower_is_better`, `description`. Every `nutrient_id` used in
+`lp_unit_id`, `has_upper_bound_concern`, `description`. Every `nutrient_id` used in
 `nutrient_requirements`, `nutrient_values`, or `requirement_equations` must have a matching row
 there. Below are the entries that need to be added for the multi-species scope of this document.
 
@@ -908,23 +977,17 @@ there. Below are the entries that need to be added for the multi-species scope o
 | `sid_phe` | SID Phenylalanine | amino_acid | swine |
 | `sid_his` | SID Histidine | amino_acid | swine |
 | `sid_arg` | SID Arginine | amino_acid | swine |
-| `dig_lys` | Digestible Lysine (Poultry) | amino_acid | poultry |
-| `dig_met` | Digestible Methionine (Poultry) | amino_acid | poultry |
-| `dig_methcys` | Digestible Met+Cys (Poultry) | amino_acid | poultry |
-| `dig_thr` | Digestible Threonine (Poultry) | amino_acid | poultry |
-| `dig_trp` | Digestible Tryptophan (Poultry) | amino_acid | poultry |
-| `dig_arg` | Digestible Arginine (Poultry) | amino_acid | poultry |
-| `dig_val` | Digestible Valine (Poultry) | amino_acid | poultry |
-| `dig_ile` | Digestible Isoleucine (Poultry) | amino_acid | poultry |
+| `dig_lys` | Digestible Lysine (Poultry/Companion) | amino_acid | poultry |
+| `dig_met` | Digestible Methionine (Poultry/Companion) | amino_acid | poultry |
+| `dig_methcys` | Digestible Met+Cys (Poultry/Companion) | amino_acid | poultry |
+| `dig_thr` | Digestible Threonine (Poultry/Companion) | amino_acid | poultry |
+| `dig_trp` | Digestible Tryptophan (Poultry/Companion) | amino_acid | poultry |
+| `dig_arg` | Digestible Arginine (Poultry/Companion) | amino_acid | poultry |
+| `dig_val` | Digestible Valine (Poultry/Companion) | amino_acid | poultry |
+| `dig_ile` | Digestible Isoleucine (Poultry/Companion) | amino_acid | poultry |
 | `lys_pct_mp` | Lysine as % of MP (Ruminants) | rumen_protein | dairy |
 | `met_pct_mp` | Methionine as % of MP (Ruminants) | rumen_protein | dairy |
 | `taurine` | Taurine | amino_acid | NULL |
-| `dig_arg` | Digestible Arginine (Companion) | amino_acid | NULL |
-| `dig_lys` | Digestible Lysine (Companion) | amino_acid | NULL |
-| `dig_met` | Digestible Methionine (Companion) | amino_acid | NULL |
-| `dig_methcys` | Digestible Met+Cys (Companion) | amino_acid | NULL |
-| `dig_thr` | Digestible Threonine (Companion) | amino_acid | NULL |
-| `dig_trp` | Digestible Tryptophan (Companion) | amino_acid | NULL |
 | `dig_lys_fish` | Digestible Lysine (Fish) | amino_acid | atlantic_salmon |
 | `dig_met_fish` | Digestible Methionine (Fish) | amino_acid | atlantic_salmon |
 | `dig_methcys_fish` | Digestible Met+Cys (Fish) | amino_acid | atlantic_salmon |

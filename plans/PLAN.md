@@ -673,6 +673,10 @@ argument parser.
 | production_class | VARCHAR | "nursery", "grower", "finisher", "sow", etc. |
 | min_inclusion | DOUBLE | canonical LP unit, fraction or kg/1000 kg |
 | max_inclusion | DOUBLE | canonical LP unit, fraction or kg/1000 kg |
+| min_strictness | VARCHAR | `'hard'` (infeasible if violated) or `'soft'` (penalty); default `'hard'` |
+| max_strictness | VARCHAR | `'hard'` or `'soft'`; default `'hard'` |
+| penalty_min | DOUBLE | objective cost per unit below `min_inclusion` (soft only) |
+| penalty_max | DOUBLE | objective cost per unit above `max_inclusion` (soft only) |
 | unit_id | VARCHAR | FK → units |
 | source_type | VARCHAR | "reference", "user", "project_override" |
 | source_id | VARCHAR | provenance |
@@ -683,9 +687,27 @@ argument parser.
 | locked | BOOLEAN | true for rows users cannot modify through feedr |
 | archived_at | TIMESTAMP | |
 
+Hard vs soft bounds follow the same LP mechanics as `nutrient_requirements`: a hard bound
+produces a standard inequality constraint (infeasible if violated); a soft bound introduces
+a slack variable with `penalty` added to the objective per unit of violation. Penalties are
+in USD per kg diet, consistent with the objective function units.
+
+Examples of when to use each:
+
+- **Hard max**: DDGS ≤ 15% in finishing swine — product quality (soft belly / bacon defect)
+  that a packer will dock or reject; treat as hard. `max_strictness = 'hard'`
+- **Soft max**: wheat middlings ≤ 20% in broilers — practical guideline for gut health, but
+  the solver can exceed it when wheat mid prices collapse and a small penalty is accepted.
+  `max_strictness = 'soft'`, `penalty_max = 0.04`
+- **Hard min**: premix = 0.25% (fixed inclusion) — both min and max set to 0.25, both hard
+- **Soft min**: animal-protein ingredients ≥ 3% in nursery — preferred for palatability but
+  not required; `min_strictness = 'soft'`, `penalty_min = 0.06`
+
+A `NULL` penalty on a soft bound is a validation error — the LP builder must reject it.
+
 The formulation API should prefer explicit constraint tables over shorthand such as
-`constrain(corn_max = 0.65)`. Any shorthand that survives must resolve to structured limit records
-and must not become the primary API.
+`constrain(corn_max = 0.65)`. Any shorthand that survives must resolve to structured limit
+records and must not become the primary API.
 
 #### `constraint_sets`
 Named sets of formulation constraints. Ingredient min/max bounds are not enough for real diet

@@ -8,6 +8,7 @@ exactly one row here. This table stores *what a nutrient is* — its stable iden
 name, class, default unit, LP unit, and formulation flags.
 
 **What this table does NOT store:**
+
 - Nutrient values in ingredients → `nutrient_values`
 - Minimum or maximum requirement levels → `nutrient_requirements`
 - Equations that predict requirements → `requirement_equations`
@@ -82,15 +83,15 @@ CREATE TABLE nutrients (
   nutrient_id       VARCHAR PRIMARY KEY,   -- stable slug, e.g. "ca", "ne_swine", "sid_lys"
   display_name      VARCHAR NOT NULL,      -- user-facing name, e.g. "Calcium", "Net Energy (Swine)"
   nutrient_class    VARCHAR NOT NULL,      -- see class taxonomy below
-  species           VARCHAR,              -- NULL = all species; else "swine", "poultry", etc.
+  species           VARCHAR,               -- NULL = all species; else "swine", "poultry", etc.
   default_unit_id   VARCHAR NOT NULL       -- FK → units; the natural reporting unit
                       REFERENCES units(unit_id),
   lp_unit_id        VARCHAR NOT NULL       -- FK → units; what the LP matrix uses internally
                       REFERENCES units(unit_id),
   default_basis     VARCHAR NOT NULL,      -- "as_fed", "dry_matter", or "either"
-  lower_is_better   BOOLEAN DEFAULT FALSE, -- TRUE for nutrients constrained by a maximum
+  has_upper_bound_concern   BOOLEAN DEFAULT FALSE, -- TRUE for nutrients constrained by a maximum
                                            --   (e.g., Fluoride, some toxicity maxima)
-  description       VARCHAR,              -- species gotchas, digestibility basis notes, etc.
+  description       VARCHAR,               -- species gotchas, digestibility basis notes, etc.
   active            BOOLEAN DEFAULT TRUE,  -- hide retired/legacy IDs without deleting
   row_origin        VARCHAR DEFAULT 'package_seed',
   row_policy        VARCHAR DEFAULT 'protected',
@@ -102,7 +103,7 @@ CREATE TABLE nutrients (
 ### Column notes
 
 **`nutrient_id`** — The stable key that every other table joins against. Follow the
-conventions in PLAN_nutrient_requirements.md exactly: no `min_` prefix on minerals
+conventions in nutrient_requirements.md exactly: no `min_` prefix on minerals
 (collision with "minimum"), no spaces, lowercase, species qualifier only when the
 measurement concept differs by species (see Section 1).
 
@@ -112,11 +113,24 @@ measurement concept differs by species (see Section 1).
 **`nutrient_class`** — Controls grouping in output tables and which constraints the LP
 solver can apply. See Section 3 for the complete taxonomy.
 
-**`species`** — `NULL` for nutrients shared across species. A `species` qualifier does NOT
-mean "only show this nutrient for that species in formulation output" — it means "the
-measurement concept of this nutrient is species-specific." A user formulating a swine diet
-will never see `nel_dairy` in their output; that is already handled because they filter
-`nutrient_requirements` by `feeding_phase_id`.
+**`species`** — Records which species the *measurement concept* belongs to, not which
+species is allowed to consume feeds containing this nutrient. `NULL` = the measurement is
+universal. `"swine"` = the assay or metabolic model is swine-specific.
+
+**Do not filter `nutrients.species` to narrow a formulation.** Species filtering must always
+go through `nutrient_requirements → feeding_phases.species`. A user formulating a swine
+diet never needs to touch `nutrients.species` — they filter `nutrient_requirements` by
+`feeding_phase_id`, and only swine-relevant nutrients appear in the result.
+
+`nutrients.species` exists to prevent ID collisions between the same measurement concept
+under different digestibility protocols (e.g., `sid_lys` vs `dig_lys` vs `dig_lys_fish`)
+and to make the ID taxonomy self-documenting. It is not an access-control column.
+
+The critique suggested renaming this to `concept_species` or `assay_species` to prevent
+misuse. The counter-argument for keeping `species`: the column already uses the same value
+domain as `feeding_phases.species`, which makes FK-based integrity checks natural, and
+nutritionists reading the schema understand "swine energy" more clearly than "concept_swine
+energy." The guard is documentation and validation, not renaming.
 
 **`default_unit_id`** — The unit nutritionists expect to see in printouts and reports.
 Energy is kcal/kg or Mcal/kg. Minerals are pct or mg/kg. Vitamins are IU/kg or mg/kg.
@@ -132,10 +146,23 @@ This is informational for users and defaults; the definitive basis for any indiv
 is always in `nutrient_values.basis` or `nutrient_requirements.basis`. Setting
 `default_basis` avoids repeated filtering in common single-species workflows.
 
-**`lower_is_better`** — Marks nutrients where the primary practical concern is an upper
-bound (toxicity, regulatory maximum, product quality). Useful for sorting result tables so
-nutrients close to their maximum appear as warnings. Does not affect LP logic directly — LP
-constraints are built from explicit `requirement_min` / `requirement_max` rows.
+**`has_upper_bound_concern`** — Purely a **display/sort hint**. `TRUE` means "this nutrient
+commonly has a meaningful safety upper bound across nearly all species" — useful for
+surfacing nutrients near their maximum as warnings in result tables. Does NOT affect LP
+constraint logic in any way; bounds come from `requirement_min` / `requirement_max` rows.
+
+The critique suggested renaming this to `usual_upper_bound_concern` or dropping it, arguing
+that Se, S, Vit A, Vit D, Cu, and Mg all have species-dependent upper-bound concerns that
+make a global flag misleading.
+
+**Counter-argument for keeping `has_upper_bound_concern` as-is:** The flag is not wrong for any
+nutrient it marks — Fl, Se, and S are genuinely upper-bound-first concerns for all species
+in all contexts; Vit A and Vit D have meaningful toxicity thresholds in every species. The
+flag does not claim "this nutrient has no minimum" — a nutrient can be `has_upper_bound_concern =
+TRUE` and still carry a `requirement_min` row. Result display logic should show both the
+minimum shortfall and the upper-bound risk for nutrients like Se and Vit A. If you want a
+less normative name, `has_toxicity_concern` is a reasonable alternative — it implies an
+upper bound matters without suggesting lower is always better. Decision deferred to owner.
 
 ---
 
@@ -161,8 +188,8 @@ The `nutrient_class` column controls grouping and display in result tables.
 ## 4. Complete `nutrients` Table
 
 This section gives the full set of rows needed to cover all species in
-`PLAN_nutrient_requirements.md`. Abbreviations: `dbu = default_unit_id`,
-`lpu = lp_unit_id`, `basis = default_basis`, `lib = lower_is_better`.
+`nutrient_requirements.md`. Abbreviations: `dbu = default_unit_id`,
+`lpu = lp_unit_id`, `basis = default_basis`, `lib = has_upper_bound_concern`.
 
 Species values used: `swine`, `beef`, `dairy`, `sheep`, `poultry`, `cat`, `dog`,
 `dairy_goat`, `atlantic_salmon`. `NULL` means shared across all species.
@@ -235,14 +262,22 @@ system, amino acids share `species` (e.g., all SID amino acids are `species = "s
 | `dig_val` | Digestible Valine | amino_acid | poultry | pct | fraction | as_fed | FALSE |
 | `dig_ile` | Digestible Isoleucine | amino_acid | poultry | pct | fraction | as_fed | FALSE |
 
-> **Companion animals** (dogs and cats) also use a digestible amino acid basis, but
-> the NRC 2006 and AAFCO companion animal profiles do not consistently apply a single
-> named digestibility system. Until companion animal AA digestibility datasets are
-> formally integrated, `dig_arg`, `dig_lys`, etc. may be shared between poultry and
-> companion animal contexts — a user needs only filter `feeding_phases.species` to
-> distinguish the two. If digestibility coefficients for companion animals diverge
-> significantly from poultry values in practice, separate `_companion` IDs can be added
-> then. Do not pre-create them.
+> **Companion animals** (dogs and cats) also use digestible amino acid values. NRC 2006
+> companion animal digestibility coefficients were largely derived from or corroborated by
+> poultry-assay data. For the MVP, companion animals **borrow the `dig_*` poultry IDs**
+> (`species = "poultry"`). This is a deliberate simplification: the IDs are the same
+> analytical concept close enough for initial formulation, and the species distinction
+> needed for formulation comes from `feeding_phases.species`, not from the `nutrients` row.
+>
+> If/when companion-animal-specific digestibility datasets become available and coefficients
+> diverge meaningfully from poultry values, add `dig_lys_companion`, `dig_arg_companion`,
+> etc. as new nutrient IDs then. Do not pre-create them now.
+>
+> **Critical**: `nutrient_requirements.md` Section 6 previously listed `dig_arg`, `dig_lys`,
+> etc. twice — once as `species = poultry` and again as `species = NULL` for companion
+> animals. That was a primary-key violation. It has been fixed: those rows appear once only,
+> with `species = "poultry"`. Cat/dog requirement rows in `nutrient_requirements` reference
+> these same IDs without conflict.
 
 #### Fish — Apparent Digestibility basis (fish assay)
 
@@ -303,7 +338,7 @@ fractions with different availabilities:
 | `k` | Potassium | mineral_macro | NULL | pct | fraction | as_fed | FALSE |
 | `s` | Sulfur | mineral_macro | NULL | pct | fraction | as_fed | TRUE |
 
-> **`s` is `lower_is_better = TRUE`**: High sulfur (>0.4% DM) causes
+> **`s` is `has_upper_bound_concern = TRUE`**: High sulfur (>0.4% DM) causes
 > polioencephalomalacia in beef cattle. The regulatory and safety concern is primarily an
 > upper bound. Formulations should surface `s` as a constraint-by-maximum, not
 > constraint-by-minimum.
@@ -328,17 +363,17 @@ is the canonical example) but the measurement is universal.
 | `mo` | Molybdenum | mineral_trace | NULL | mg_kg | mg_kg | as_fed | FALSE |
 | `fl` | Fluoride | mineral_trace | NULL | mg_kg | mg_kg | as_fed | TRUE |
 
-> **`se` is `lower_is_better = TRUE`**: US FDA maximum is 0.3–0.5 mg/kg depending on
+> **`se` is `has_upper_bound_concern = TRUE`**: US FDA maximum is 0.3–0.5 mg/kg depending on
 > species. Selenium toxicity (selenosis) is as dangerous as deficiency. Formulations
 > should always enforce the upper bound.
 >
-> **`cu` is `lower_is_better = FALSE`**: The lower_is_better flag cannot encode the
+> **`cu` is `has_upper_bound_concern = FALSE`**: The has_upper_bound_concern flag cannot encode the
 > sheep-specific toxicity concern — that belongs in `nutrient_requirements.requirement_max`
-> for sheep phases only, not in the nutrient definition. `cu` is `lower_is_better = FALSE`
+> for sheep phases only, not in the nutrient definition. `cu` is `has_upper_bound_concern = FALSE`
 > globally because the primary concern for most species is deficiency. The sheep maximum
 > is a requirements-table constraint, not a nutrients-table flag.
 >
-> **`fl` is `lower_is_better = TRUE`**: Fluoride is never a dietary deficiency concern;
+> **`fl` is `has_upper_bound_concern = TRUE`**: Fluoride is never a dietary deficiency concern;
 > the entire practical concern is an upper limit (skeletal fluorosis).
 
 ### 4.7 Fat-Soluble Vitamins
@@ -351,14 +386,21 @@ may not efficiently activate the plant-derived menaquinone form of K.
 | `vit_a` | Vitamin A | vitamin_fat_soluble | NULL | iu_kg | iu_kg | as_fed | FALSE |
 | `vit_d3` | Vitamin D3 (Cholecalciferol) | vitamin_fat_soluble | NULL | iu_kg | iu_kg | as_fed | FALSE |
 | `vit_d2` | Vitamin D2 (Ergocalciferol) | vitamin_fat_soluble | NULL | iu_kg | iu_kg | as_fed | FALSE |
-| `vit_e` | Vitamin E | vitamin_fat_soluble | NULL | iu_kg | iu_kg | as_fed | FALSE |
+| `vit_e` | Vitamin E | vitamin_fat_soluble | NULL | mg_kg | mg_kg | as_fed | FALSE |
 | `vit_k` | Vitamin K (Menadione) | vitamin_fat_soluble | NULL | mg_kg | mg_kg | as_fed | FALSE |
 | `vit_k1` | Vitamin K1 (Phylloquinone) | vitamin_fat_soluble | cat | mg_kg | mg_kg | as_fed | FALSE |
 
 > **`vit_a` toxicity**: Vitamin A is a nutrient where both deficiency AND toxicity are
 > real concerns. Requirement tables should carry both `requirement_min` and
-> `requirement_max`. The `lower_is_better = FALSE` default still applies — the primary
+> `requirement_max`. The `has_upper_bound_concern = FALSE` default still applies — the primary
 > formulation constraint is a minimum.
+>
+> **`vit_e` LP unit is `mg_kg`**, not `iu_kg`. Modern references (NRC 2011 fish,
+> NRC 2006 companion, EU directives) express Vit E as mg alpha-tocopherol equivalents.
+> IU-to-mg conversion for Vit E is form-dependent: ~1 IU = 1 mg dl-alpha-tocopherol
+> acetate (synthetic), or ~0.67 mg d-alpha-tocopherol (natural). Using `mg_kg` as the LP
+> unit avoids ambiguity. Legacy data in IU must be converted on import using a
+> `nutrient_unit_conversions` entry (see Section 11).
 >
 > **D3 vs D2**: These are kept as separate IDs because:
 > - D2 is largely inactive in poultry — a poultry formulation must use D3 only
@@ -435,7 +477,7 @@ feeding_phases  (species, production_class, phase metadata)
       ↓
 nutrient_requirements  (requirement_min, requirement_max, per phase × nutrient × set)
       ↓
-nutrients  (display_name, nutrient_class, default_unit_id, lp_unit_id, lower_is_better)
+nutrients  (display_name, nutrient_class, default_unit_id, lp_unit_id, has_upper_bound_concern)
 ```
 
 The `nutrients` table itself does not drive filtering decisions — users filter on
@@ -453,13 +495,13 @@ feedr |>
   ) |>
   left_join(
     feedr |> get_table("nutrients") |>
-      select(nutrient_id, display_name, nutrient_class, default_unit_id, lower_is_better),
+      select(nutrient_id, display_name, nutrient_class, default_unit_id, has_upper_bound_concern),
     by = "nutrient_id"
   ) |>
   arrange(nutrient_class, nutrient_id)
 ```
 
-### 5.2 LP normalization
+### 5.2 LP unit normalization
 
 The LP builder reads `lp_unit_id` from `nutrients` to normalize all nutrient values and
 requirement bounds into the same unit before constructing the constraint matrix:
@@ -472,7 +514,89 @@ For each nutrient j:
 ```
 
 `lp_unit_id` must be the same for a given nutrient across all ingredient records and all
-requirement records. The LP builder should fail with a clear error if units differ.
+requirement records. The LP builder must fail with a clear error if units conflict.
+
+Generic unit conversions (pct → fraction: ÷100; mg/kg ↔ g/kg: ×0.001) live in the
+`units` table or a simple conversion lookup. **Nutrient-specific conversions** (IU ↔ mg
+for vitamins A, D, E) require a separate `nutrient_unit_conversions` table because the
+factor differs by nutrient and even by chemical form — see Section 11.
+
+### 5.3 Basis conversion
+
+Unit normalization alone is not enough. As-fed and dry-matter values cannot be mixed in
+the same LP constraint. The solver must operate on a single basis.
+
+**Rule: the formulation basis is set at solve time, not in the `nutrients` table.**
+
+`nutrients.default_basis` is a hint for display and import defaults only. The actual
+conversion happens when the LP matrix is built:
+
+```
+Solver basis: as_fed (default) or dry_matter (user-selected, common for ruminants)
+
+If solver_basis = "as_fed":
+  - Ingredient values in as_fed: use directly
+  - Ingredient values in dry_matter: multiply by (dm_value / 100) to convert to as_fed
+  - Requirement rows in dry_matter: multiply by (ingredient_weighted_dm / 100)
+    OR fail if dm cannot be estimated
+
+If solver_basis = "dry_matter":
+  - Ingredient values in as_fed: divide by (dm_value / 100)
+  - Ingredient values in dry_matter: use directly
+  - Requirement rows in as_fed: divide by (dm_value / 100)
+```
+
+**What happens when `dm` is missing:**
+If an ingredient has no `dm` value in `nutrient_values` and the solver needs to convert
+between bases, the LP builder must fail with:
+
+```
+Error: Cannot convert Corn (CYD2) from as_fed to dry_matter basis —
+no dry matter value found in nutrient_values.
+Add a dm value for CYD2 or reformulate on an as_fed basis.
+```
+
+Silently assuming a typical dm (e.g., 88%) is not allowed. See PLAN.md on silent
+assumptions.
+
+**Mixed-basis requirement rows:** A `nutrient_requirements` set should not mix as-fed
+and dry-matter rows for the same phase. If the solver encounters mixed-basis requirements
+it must either convert all rows to the solver basis (when dm is available for all
+ingredients) or error. Never silently ignore the basis mismatch.
+
+### 5.4 Mixed-source min/max provenance in `nutrient_requirements`
+
+The critique raised a valid concern: a nutrient like selenium has a nutritional minimum
+from NRC and a regulatory maximum from the FDA. One row with one `source` field cannot
+cleanly cite both.
+
+**The current schema already handles this correctly via two rows.** The UNIQUE constraint
+on `nutrient_requirements` is:
+
+```sql
+UNIQUE (feeding_phase_id, requirement_set_id, nutrient_id, source, basis)
+```
+
+Because `source` is in the key, two rows for the same nutrient in the same phase are
+permitted when they come from different sources:
+
+| feeding_phase_id | requirement_set_id | nutrient_id | req_min | req_max | source |
+|---|---|---|---|---|---|
+| `beef_finishing1` | `nasem2022_se` | `se` | 0.10 | NULL | `NASEM2022` |
+| `beef_finishing1` | `nasem2022_se` | `se` | NULL | 3.0 | `FDA_reg` |
+
+The LP builder collects all active rows for a phase × nutrient, taking the most
+restrictive bound from each row regardless of source. The `source` and `source_id`
+columns provide full provenance for each bound independently.
+
+**User-facing note:** when displaying requirements, group by `nutrient_id` and show
+`source` per bound so users see "minimum from NASEM2022, maximum from FDA_reg" rather
+than one blended row.
+
+The critique suggested either a `bound_type` + `requirement_value` schema (one row per
+bound) or separate `min_source`/`max_source` columns. Those would work too, but the
+two-row approach avoids changing the existing schema. Decision: keep current schema,
+document the two-row pattern explicitly.
 
 ---
 
@@ -480,13 +604,13 @@ requirement records. The LP builder should fail with a clear error if units diff
 
 These show what a resolved result table looks like when nutrients are joined with
 requirements for a specific species. Values are the illustrative approximations from
-`PLAN_nutrient_requirements.md`.
+`nutrient_requirements.md`.
 
 ### 6.1 Swine Grower (25–50 kg BW)
 
 `feeding_phase_id = "swine_gf1"`, `requirement_set_id = "nasem2022"`, `basis = "as_fed"`
 
-| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | lower_is_better |
+| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | has_upper_bound_concern |
 |---|---|---|---|---|---|---|
 | `ne_swine` | Net Energy (Swine) | energy | 2400 | — | kcal/kg | FALSE |
 | `cp` | Crude Protein | proximate | 16.0 | — | % | FALSE |
@@ -516,7 +640,7 @@ requirements for a specific species. Values are the illustrative approximations 
 
 `feeding_phase_id = "layer_early_lay"`, `requirement_set_id = "illustrative"`, `basis = "as_fed"`
 
-| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | lower_is_better |
+| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | has_upper_bound_concern |
 |---|---|---|---|---|---|---|
 | `amen_poultry` | AMEn (Poultry) | energy | 2850 | — | kcal/kg | FALSE |
 | `cp` | Crude Protein | proximate | 16.0 | — | % | FALSE |
@@ -540,7 +664,7 @@ requirements for a specific species. Values are the illustrative approximations 
 
 `feeding_phase_id = "sheep_ewe_early_gest"`, `requirement_set_id = "illustrative"`, `basis = "as_fed"`
 
-| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | lower_is_better |
+| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | has_upper_bound_concern |
 |---|---|---|---|---|---|---|
 | `me_sheep` | Metabolizable Energy (Sheep) | energy | 2.10 | — | Mcal/kg | FALSE |
 | `cp` | Crude Protein | proximate | 10.0 | — | % | FALSE |
@@ -560,7 +684,7 @@ requirements for a specific species. Values are the illustrative approximations 
 
 `feeding_phase_id = "cat_adult"`, `requirement_set_id = "illustrative"`, `basis = "as_fed"`
 
-| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | lower_is_better |
+| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | has_upper_bound_concern |
 |---|---|---|---|---|---|---|
 | `me_companion` | Metabolizable Energy (Companion) | energy | 3500 | — | kcal/kg | FALSE |
 | `cp` | Crude Protein | proximate | 26.0 | — | % | FALSE |
@@ -585,7 +709,7 @@ requirements for a specific species. Values are the illustrative approximations 
 
 `feeding_phase_id = "salmon_parr"`, `requirement_set_id = "illustrative"`, `basis = "as_fed"`
 
-| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | lower_is_better |
+| nutrient_id | display_name | nutrient_class | req_min | req_max | unit | has_upper_bound_concern |
 |---|---|---|---|---|---|---|
 | `de_salmon` | Digestible Energy (Salmon) | energy | 3700 | — | kcal/kg | FALSE |
 | `cp` | Crude Protein | proximate | 38.0 | — | % | FALSE |
@@ -685,5 +809,128 @@ The LP builder treats unit conversion as a required step, not an optional one.
 
 ---
 
+## 11. `nutrient_unit_conversions` Table
+
+Some unit conversions are nutrient-specific and cannot be expressed as a simple
+dimensional ratio. Vitamin IU-to-mass conversions are the canonical case: the factor
+differs by nutrient and by chemical form of the supplement.
+
+```sql
+CREATE TABLE nutrient_unit_conversions (
+  nutrient_id    VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+  from_unit_id   VARCHAR NOT NULL REFERENCES units(unit_id),
+  to_unit_id     VARCHAR NOT NULL REFERENCES units(unit_id),
+  factor         DOUBLE NOT NULL,   -- to_value = from_value * factor
+  chemical_form  VARCHAR,           -- e.g. "dl-alpha-tocopherol_acetate", "d-alpha-tocopherol"
+  notes          VARCHAR,
+  source         VARCHAR,           -- reference for the conversion factor
+  active         BOOLEAN DEFAULT TRUE,
+  PRIMARY KEY (nutrient_id, from_unit_id, to_unit_id, chemical_form)
+);
+```
+
+### Seed rows needed for vitamins
+
+| nutrient_id | from_unit | to_unit | factor | chemical_form | notes |
+|---|---|---|---|---|---|
+| `vit_a` | `iu_kg` | `mcg_kg` | 0.300 | `retinol` | 1 IU retinol = 0.3 µg |
+| `vit_a` | `iu_kg` | `mcg_kg` | 0.600 | `beta_carotene` | 1 IU beta-carotene = 0.6 µg |
+| `vit_d3` | `iu_kg` | `mcg_kg` | 0.025 | `cholecalciferol` | 1 IU = 0.025 µg D3 |
+| `vit_d2` | `iu_kg` | `mcg_kg` | 0.025 | `ergocalciferol` | 1 IU = 0.025 µg D2 |
+| `vit_e` | `iu_kg` | `mg_kg` | 1.000 | `dl-alpha-tocopherol_acetate` | synthetic; 1 IU ≈ 1 mg |
+| `vit_e` | `iu_kg` | `mg_kg` | 0.671 | `d-alpha-tocopherol` | natural; 1 IU ≈ 0.67 mg |
+
+For most import workflows, `vit_e` data arrives in IU. The import helper must look up the
+conversion factor by `chemical_form` (or default to the synthetic form if form is unknown)
+before writing to `nutrient_values` in `mg_kg`. The LP matrix then uses `mg_kg`
+uniformly.
+
+Vitamins A and D remain in `iu_kg` as `lp_unit_id` because IU is still the dominant
+reporting unit across all species in North American premix and feed analysis contexts.
+If a source reports μg, convert to IU on import using the inverse factor.
+
+---
+
+## 12. `nutrient_aliases` Table
+
+Users import data from spreadsheets, lab reports, and NRC/NASEM tables where column
+headers follow different naming conventions. The `nutrient_aliases` table maps incoming
+names to the canonical `nutrient_id`.
+
+```sql
+CREATE TABLE nutrient_aliases (
+  alias        VARCHAR NOT NULL,  -- incoming column name / label
+  nutrient_id  VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+  source       VARCHAR,           -- "package_legacy", "NASEM2022", "NRC2012", "user"
+  active       BOOLEAN DEFAULT TRUE,
+  notes        VARCHAR,
+  PRIMARY KEY (alias)             -- alias must be globally unique in the active set
+);
+```
+
+> **Note on primary key**: `alias` is the PK because a given alias string should always
+> resolve to exactly one `nutrient_id`. If two import sources use the same label for
+> different nutrients (unlikely but possible), qualify the alias in the `source` column
+> and document the ambiguity.
+
+### Seed aliases for known naming variants
+
+This table also handles the migration from existing seeded IDs in the R package
+(`sttd_p`, `p`, `na_mineral`) to the new canonical IDs (`p_sttd`, `p_total`, `na`):
+
+| alias | nutrient_id | source | notes |
+|---|---|---|---|
+| `sttd_p` | `p_sttd` | `package_legacy` | Old seeded ID before rename |
+| `p` | `p_total` | `package_legacy` | Old seeded ID; ambiguous, now `p_total` |
+| `na_mineral` | `na` | `package_legacy` | Old seeded ID with redundant suffix |
+| `STTD P` | `p_sttd` | `spreadsheet_import` | Column header style |
+| `STTD-P` | `p_sttd` | `spreadsheet_import` | |
+| `dLys` | `dig_lys` | `spreadsheet_import` | |
+| `dMet` | `dig_met` | `spreadsheet_import` | |
+| `dMet+Cys` | `dig_methcys` | `spreadsheet_import` | |
+| `dThr` | `dig_thr` | `spreadsheet_import` | |
+| `SID Lys` | `sid_lys` | `spreadsheet_import` | |
+| `SID Lysine` | `sid_lys` | `spreadsheet_import` | |
+| `Ca` | `ca` | `spreadsheet_import` | |
+| `Ca %` | `ca` | `spreadsheet_import` | |
+| `Calcium` | `ca` | `spreadsheet_import` | |
+| `ME kcal/kg` | `me_swine` | `spreadsheet_import` | Ambiguous — swine assumed |
+| `ME (kcal/kg)` | `me_swine` | `spreadsheet_import` | |
+| `NE` | `ne_swine` | `spreadsheet_import` | Ambiguous — swine assumed |
+| `NEL` | `nel_dairy` | `spreadsheet_import` | |
+| `AMEn` | `amen_poultry` | `spreadsheet_import` | |
+| `NPP` | `p_npp` | `spreadsheet_import` | Non-phytate P |
+| `Non-phytate P` | `p_npp` | `spreadsheet_import` | |
+| `Available P` | `p_avail` | `spreadsheet_import` | Legacy; warn user to use p_npp or p_sttd |
+| `Vit E` | `vit_e` | `spreadsheet_import` | |
+| `Vitamin E` | `vit_e` | `spreadsheet_import` | |
+| `Vit A` | `vit_a` | `spreadsheet_import` | |
+| `Vitamin A` | `vit_a` | `spreadsheet_import` | |
+
+The import system should warn when it uses an alias — e.g., `"Column 'dLys' matched
+nutrient_id 'dig_lys' via alias. Verify this is the intended nutrient."` Users should
+not have to know alias resolution is happening silently.
+
+---
+
+## 13. Implementation Order (revised)
+
+1. **Create `units` table** — FK target for everything else. Seed all rows from Section 8.
+2. **Create `nutrient_unit_conversions` table** — needed before any IU vitamin data is
+   imported.
+3. **Insert `nutrients` rows** in class order: energy, proximate, amino acids,
+   rumen protein, macrominerals, trace minerals, fat-soluble vitamins, water-soluble
+   vitamins, fatty acids, pigments.
+4. **Create `nutrient_aliases` table** and seed legacy + spreadsheet aliases.
+5. **Validate FKs** before seeding `nutrient_requirements` — confirm every `nutrient_id`
+   used in requirements has a row in `nutrients`. Fail the migration if any are missing.
+6. **Migrate old seeded IDs** — any existing rows using `sttd_p`, `p`, `na_mineral` must
+   be updated or aliased via `nutrient_aliases` before new seed data is inserted.
+7. **Do not add `nutrients` rows speculatively** — only add what has corresponding
+   `nutrient_values` or `nutrient_requirements` entries.
+8. **Lock all package seed rows** — `locked = TRUE`, `row_policy = "protected"`.
+
+---
+
 *Last updated: 2026-06-13*
-*Status: Planning — cross-references PLAN_nutrient_requirements.md (2026-06-12)*
+*Status: Planning — addresses critiques in nutrient_critiques.md*

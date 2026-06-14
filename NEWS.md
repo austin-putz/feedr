@@ -1,3 +1,44 @@
+# feedr 0.0.0.9012
+
+- New: `diet_spec(.data, basis, source, species, production_class, spec_name, session, .save)`
+  — diet specification builder. Validates a filtered `nutrient_requirements` table,
+  normalizes values to solver-canonical LP units, and persists a snapshot to two new
+  tables (`diet_specs` and `diet_spec_nutrients`). Returns a lazy `feedr_tbl` of the
+  newly written `diet_specs` rows, ready to pipe directly into `formulate_diet()`.
+  Key behaviors:
+  - Auto-groups by `feeding_phase_id` when present; one `diet_specs` row per phase.
+  - All phases validated before any DB write — no partial saves.
+  - Thirteen validation checks: missing columns, all-NA bounds, duplicate nutrients,
+    inverted bounds, non-finite / negative values, unknown `nutrient_id`, invalid or
+    mixed `basis`, invalid strictness, soft constraints without penalties, mixed
+    `source`, mixed `species` across phases, and duplicate `spec_name` on active rows.
+  - LP normalization: looks up `nutrients.lp_unit_id`, fetches factor from
+    `nutrient_unit_conversions`, stores `lp_min/lp_max/lp_target` and
+    `conversion_factor` as an audit snapshot.
+  - `.save = FALSE` returns a plain preview tibble (nothing written).
+  - No session: returns preview tibble with LP columns as NA.
+  - `spec_name` uniqueness enforced at the application layer (active rows only).
+- New schema v3 → v4 migration: adds `diet_specs` and `diet_spec_nutrients` tables.
+  `schema_version` bumped to `4L`. Migration runs via `init_feedr_db(migrate = TRUE)`.
+- New: `diet_specs` table — one row per validated specification. Carries provenance
+  metadata (`species`, `production_class`, `basis`, `source`, `requirement_set_id`,
+  `feeding_phase_id`, `phase_name`, `n_nutrients`). `row_policy = "computed"` on all
+  rows written by `diet_spec()`.
+- New: `diet_spec_nutrients` table — one row per nutrient per spec. Stores
+  user-facing `requirement_*` values alongside solver-normalized `lp_*` values,
+  `conversion_factor`, strictness columns, and penalty placeholders for v2.
+  UNIQUE constraint on `(diet_spec_id, nutrient_id)`.
+- Updated: `archive_rows()`, `update_rows()`, `drop_rows()` each gain a
+  `.allow_computed = FALSE` argument. When targeting rows with `row_policy =
+  "computed"` (written by `diet_spec()`), a warning is printed explaining the
+  provenance risk before the operation proceeds. Set `.allow_computed = TRUE` to
+  suppress the warning.
+- New: `R/requirements.R` — houses `diet_spec()` and eight internal `.ds_*` helpers.
+- New: `tests/testthat/test-diet-spec.R` — 35 tests covering schema, LP
+  normalization, multi-phase grouping, sort ordering, all validation error paths,
+  spec_name uniqueness, missing unit conversions, `.allow_computed` protection,
+  preview mode, and v3 → v4 migration.
+
 # feedr 0.0.0.9011
 
 - `schema()` and `describe_table()`: renamed first argument from `.con` to `.db_con`

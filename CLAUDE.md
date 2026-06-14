@@ -8,7 +8,7 @@
 
 ## What feedr Is
 
-feedr is an open-source R package for livestock diet formulation and optimization. It provides a pipe-first API backed by a local DuckDB database — no server required. The package is in early development (v0.0.0.9008) with a solid data layer in place and the optimization engine as the next major milestone.
+feedr is an open-source R package for livestock diet formulation and optimization. It provides a pipe-first API backed by a local DuckDB database — no server required. The package is in early development (v0.0.0.9012) with a solid data layer and diet specification layer in place; the LP optimization engine is the next major milestone.
 
 ---
 
@@ -20,6 +20,8 @@ feedr is an open-source R package for livestock diet formulation and optimizatio
 - **Readable identifiers** — short ingredient symbols like `SBM48`, `DDGS`, `CYD2`, `MCP`
 - **Explicit units and basis** — every nutrient value carries `unit_id` and `basis`
 - **Auditable rows** — `row_origin`, `row_policy`, and `archived_at` enable soft deletes and traceability; seed/reference rows are protected
+- **Easy to use and crystal clear** — users are not advanced R users typically (nutritionists). Therefore function names, arguments, and messages need to be clear for users as well as documentation must be impeccable. To rely on their diet formulations, nothing should be ambiguous on how it's calculated or what the program is doing.
+- **Argument naming convention** — dot-prefix (`.arg`) is reserved for control/meta arguments that do not correspond to a data column name: `.data`, `.by`, `.rows`, `.mode`, `.reason`, `.save`, `.allow_computed`. Domain arguments that represent a concept or input use no dot: `basis`, `species`, `source`, `spec`, `prices`, `constraints`, `ingredients`. This distinction matters most in functions that accept `...` for column names (e.g. `mutate_table()`), where dot-prefixed args are unambiguously not column names.
 
 ---
 
@@ -30,6 +32,8 @@ R/
 ├── db.R            — init_feedr_db, close_feedr_db, schema creation, migrations
 ├── tables.R        — get_table, feedr_tbl S3 class and dplyr methods
 ├── write.R         — append_rows, archive_rows, update_rows, mutate_table, drop_rows
+├── requirements.R  — diet_spec() and internal .ds_* helpers
+├── schema.R        — schema(), describe_table(), table/column descriptions
 ├── feedr-package.R — package metadata
 └── zzz.R           — .onAttach startup message and package options
 ```
@@ -46,10 +50,11 @@ R/
 | `describe_table(.db_con, .table_name)` | Print column-level detail (type, nullable, key, description) for one table |
 | `get_table(feedr, name)` | Open a table as a lazy, pipe-friendly `feedr_tbl` |
 | `append_rows(.data, ..., .rows, .replace)` | Insert new rows; `.replace = TRUE` does DELETE + INSERT |
-| `archive_rows(.data, .reason, .by)` | Soft-delete rows by setting `archived_at` timestamp |
-| `update_rows(.data, ..., .rows, .by)` | Update column values in existing rows |
+| `archive_rows(.data, .reason, .by, .allow_computed)` | Soft-delete rows by setting `archived_at` timestamp |
+| `update_rows(.data, ..., .rows, .by, .allow_computed)` | Update column values in existing rows |
 | `mutate_table(.data, ..., .default)` | Add columns to a table via `ALTER TABLE ... ADD COLUMN` |
-| `drop_rows(.data, .by, .all)` | Permanently delete rows |
+| `drop_rows(.data, .by, .all, .allow_computed)` | Permanently delete rows |
+| `diet_spec(.data, basis, source, species, production_class, spec_name, session, .save)` | Validate requirements, normalize to LP units, save to `diet_specs` + `diet_spec_nutrients`; returns a `feedr_tbl` |
 
 ---
 
@@ -64,7 +69,7 @@ Returned by `init_feedr_db()`. Wraps a DBI connection with an auto-close finaliz
 | `con` | DBI connection to DuckDB |
 | `path` | File path or `:memory:` |
 | `read_only` | Logical |
-| `schema_version` | Integer (currently `3L`) |
+| `schema_version` | Integer (currently `4L`) |
 | `opened_at` | POSIXct timestamp |
 | `.ref` | Internal env with finalizer — auto-closes on GC |
 
@@ -82,7 +87,7 @@ Returned by `get_table()`. A lazy table wrapper with dplyr support.
 
 ---
 
-## Database Schema (v3)
+## Database Schema (v4)
 
 ### Core Reference Tables
 
@@ -110,6 +115,13 @@ Returned by `get_table()`. A lazy table wrapper with dplyr support.
 |---|---|
 | `nutrient_requirements` | `requirement_id` (PK UUID), `feeding_phase_id`, `requirement_set_id`, `nutrient_id`, `requirement_min`, `requirement_max`, `requirement_target`, `min_strictness`, `max_strictness`, `unit_id`, `basis`, `locked`, `archived_at` |
 
+### Diet Specification Tables
+
+| Table | Key Columns |
+| --- | --- |
+| `diet_specs` | `diet_spec_id` (PK UUID), `spec_name`, `feeding_phase_id` (FK), `requirement_set_id`, `species`, `production_class`, `phase_name`, `basis`, `source`, `n_nutrients`, `row_origin`, `row_policy`, `archived_at` |
+| `diet_spec_nutrients` | `diet_spec_nutrient_id` (PK UUID), `diet_spec_id` (FK), `nutrient_id` (FK), `requirement_min/max/target`, `unit_id`, `basis`, `lp_min/lp_max/lp_target`, `lp_unit_id`, `conversion_factor`, `min_strictness`, `max_strictness`, `penalty_min/max/target`, `source_requirement_id`, `row_origin`, `row_policy`, `archived_at`; UNIQUE `(diet_spec_id, nutrient_id)` |
+
 ### Views
 
 | View | Description |
@@ -124,6 +136,7 @@ Returned by `get_table()`. A lazy table wrapper with dplyr support.
 |---|---|
 | v1 → v2 | Adds `nutrient_requirements` table |
 | v2 → v3 | Adds `ingredient_nutrient_sources`, `ingredient_symbols`, `ingredient_tags`, `ingredient_nutrient_values`, and the `ingredient_nutrient_values_resolved` view |
+| v3 → v4 | Adds `diet_specs` and `diet_spec_nutrients` tables |
 
 Migration is triggered by `init_feedr_db(migrate = TRUE)`.
 

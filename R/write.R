@@ -500,7 +500,7 @@ append_rows <- function(.data, ..., .rows = NULL, .replace = FALSE) {
 #'   archive_rows(.reason = "retired ingredients")
 #' }
 #' @export
-archive_rows <- function(.data, .reason = NULL, .by = NULL) {
+archive_rows <- function(.data, .reason = NULL, .by = NULL, .allow_computed = FALSE) {
 
   .feedr_check_tbl(.data, "archive_rows")
 
@@ -532,6 +532,9 @@ archive_rows <- function(.data, .reason = NULL, .by = NULL) {
     )
     return(invisible(.data))
   }
+
+  # Warn when targeting computed rows (unless user opts in)
+  .feedr_warn_computed(con, tbl_name, pk_col, pk_vals, .allow_computed, "archive_rows")
 
   # Build quoted IN list
   quoted <- paste0(
@@ -599,7 +602,7 @@ archive_rows <- function(.data, .reason = NULL, .by = NULL) {
 #'   )
 #' }
 #' @export
-update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
+update_rows <- function(.data, ..., .rows = NULL, .by = NULL, .allow_computed = FALSE) {
 
   .feedr_check_tbl(.data, "update_rows")
 
@@ -665,6 +668,9 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
       return(invisible(.data))
     }
 
+    # Warn when targeting computed rows (unless user opts in)
+    .feedr_warn_computed(con, tbl_name, pk_col, pk_vals, .allow_computed, "update_rows")
+
     n_target <- length(pk_vals)
 
     set_clause <- paste(
@@ -728,6 +734,9 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
         call. = FALSE
       )
     }
+
+    rows_pk_vals <- as.character(.rows[[pk_col]])
+    .feedr_warn_computed(con, tbl_name, pk_col, rows_pk_vals, .allow_computed, "update_rows")
 
     n_ok <- 0L
 
@@ -797,7 +806,7 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
 #' db |> get_table("units") |> drop_rows(.all = TRUE)
 #' }
 #' @export
-drop_rows <- function(.data, .by = NULL, .all = FALSE) {
+drop_rows <- function(.data, .by = NULL, .all = FALSE, .allow_computed = FALSE) {
 
   .feedr_check_tbl(.data, "drop_rows")
 
@@ -840,6 +849,9 @@ drop_rows <- function(.data, .by = NULL, .all = FALSE) {
     return(invisible(.data))
   }
 
+  # Warn when targeting computed rows (unless user opts in)
+  .feedr_warn_computed(con, tbl_name, pk_col, pk_vals, .allow_computed, "drop_rows")
+
   quoted <- paste0(
     "'", gsub("'", "''", as.character(pk_vals)), "'", collapse = ", "
   )
@@ -861,6 +873,36 @@ drop_rows <- function(.data, .by = NULL, .all = FALSE) {
 # ---------------------------------------------------------------------------
 # Internal: SQL value formatter
 # ---------------------------------------------------------------------------
+
+# Warn when a write operation targets rows with row_policy = "computed".
+# Called before any destructive operation so users understand the risk.
+.feedr_warn_computed <- function(con, tbl_name, pk_col, pk_vals, allow_computed, fn_name) {
+  if (isTRUE(allow_computed)) return(invisible(NULL))
+  if (!"row_policy" %in% DBI::dbListFields(con, tbl_name)) return(invisible(NULL))
+
+  quoted <- paste0("'", gsub("'", "''", as.character(pk_vals)), "'", collapse = ", ")
+  n_computed <- DBI::dbGetQuery(con, paste0(
+    "SELECT COUNT(*) AS n FROM \"", tbl_name, "\" ",
+    "WHERE \"", pk_col, "\" IN (", quoted, ") ",
+    "AND row_policy = 'computed'"
+  ))$n
+
+  if (n_computed == 0L) return(invisible(NULL))
+
+  warning(
+    n_computed, " row(s) in `", tbl_name, "` have row_policy = \"computed\".\n",
+    "These rows were created by diet_spec() and represent a requirement snapshot\n",
+    "that may be referenced by saved formulations.\n\n",
+    "Editing them in-place may silently break the provenance link between a\n",
+    "saved formulation and the exact requirements used to produce it.\n\n",
+    "Recommended alternatives:\n",
+    "  - Create a revised spec:  diet_spec(..., source = \"revised_oct_2025\")\n",
+    "  - Archive this spec:      archive_rows(..., .reason = \"superseded\")\n\n",
+    "To proceed anyway, set .", fn_name, " = TRUE — e.g.:\n",
+    "  ", fn_name, "(..., .allow_computed = TRUE)",
+    call. = FALSE
+  )
+}
 
 # Format an R scalar as a SQL literal for SET clauses.
 .feedr_val_to_sql <- function(val) {

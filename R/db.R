@@ -232,6 +232,61 @@ init_feedr_db <- function(path = NULL,
       WHERE rn = 1
     ")
   }
+
+  # v3 → v4: add diet specification tables
+  if (!DBI::dbExistsTable(con, "diet_specs")) {
+    message("feedr: Migrating schema v3 → v4 (adding diet_specs, diet_spec_nutrients)")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS diet_specs (
+        diet_spec_id        VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+        spec_name           VARCHAR,
+        feeding_phase_id    VARCHAR REFERENCES feeding_phases(feeding_phase_id),
+        requirement_set_id  VARCHAR,
+        species             VARCHAR NOT NULL,
+        production_class    VARCHAR NOT NULL,
+        phase_name          VARCHAR,
+        basis               VARCHAR NOT NULL,
+        source              VARCHAR NOT NULL,
+        n_nutrients         INTEGER NOT NULL,
+        row_origin          VARCHAR NOT NULL DEFAULT 'diet_spec',
+        row_policy          VARCHAR NOT NULL DEFAULT 'computed',
+        created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        archived_at         TIMESTAMP,
+        archive_reason      VARCHAR
+      )
+    ")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS diet_spec_nutrients (
+        diet_spec_nutrient_id   VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+        diet_spec_id            VARCHAR NOT NULL REFERENCES diet_specs(diet_spec_id),
+        nutrient_id             VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+        requirement_min         DOUBLE,
+        requirement_max         DOUBLE,
+        requirement_target      DOUBLE,
+        unit_id                 VARCHAR NOT NULL REFERENCES units(unit_id),
+        basis                   VARCHAR NOT NULL,
+        lp_min                  DOUBLE,
+        lp_max                  DOUBLE,
+        lp_target               DOUBLE,
+        lp_unit_id              VARCHAR REFERENCES units(unit_id),
+        conversion_factor       DOUBLE,
+        min_strictness          VARCHAR NOT NULL DEFAULT 'hard',
+        max_strictness          VARCHAR NOT NULL DEFAULT 'hard',
+        penalty_min             DOUBLE,
+        penalty_max             DOUBLE,
+        penalty_target          DOUBLE,
+        source_requirement_id   VARCHAR,
+        row_origin              VARCHAR NOT NULL DEFAULT 'diet_spec',
+        row_policy              VARCHAR NOT NULL DEFAULT 'computed',
+        created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        archived_at             TIMESTAMP,
+        archive_reason          VARCHAR,
+        UNIQUE (diet_spec_id, nutrient_id)
+      )
+    ")
+  }
 }
 
 
@@ -441,6 +496,56 @@ init_feedr_db <- function(path = NULL,
     )
   ")
 
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS diet_specs (
+      diet_spec_id        VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+      spec_name           VARCHAR,
+      feeding_phase_id    VARCHAR REFERENCES feeding_phases(feeding_phase_id),
+      requirement_set_id  VARCHAR,
+      species             VARCHAR NOT NULL,
+      production_class    VARCHAR NOT NULL,
+      phase_name          VARCHAR,
+      basis               VARCHAR NOT NULL,
+      source              VARCHAR NOT NULL,
+      n_nutrients         INTEGER NOT NULL,
+      row_origin          VARCHAR NOT NULL DEFAULT 'diet_spec',
+      row_policy          VARCHAR NOT NULL DEFAULT 'computed',
+      created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      archived_at         TIMESTAMP,
+      archive_reason      VARCHAR
+    )
+  ")
+
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS diet_spec_nutrients (
+      diet_spec_nutrient_id   VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+      diet_spec_id            VARCHAR NOT NULL REFERENCES diet_specs(diet_spec_id),
+      nutrient_id             VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+      requirement_min         DOUBLE,
+      requirement_max         DOUBLE,
+      requirement_target      DOUBLE,
+      unit_id                 VARCHAR NOT NULL REFERENCES units(unit_id),
+      basis                   VARCHAR NOT NULL,
+      lp_min                  DOUBLE,
+      lp_max                  DOUBLE,
+      lp_target               DOUBLE,
+      lp_unit_id              VARCHAR REFERENCES units(unit_id),
+      conversion_factor       DOUBLE,
+      min_strictness          VARCHAR NOT NULL DEFAULT 'hard',
+      max_strictness          VARCHAR NOT NULL DEFAULT 'hard',
+      penalty_min             DOUBLE,
+      penalty_max             DOUBLE,
+      penalty_target          DOUBLE,
+      source_requirement_id   VARCHAR,
+      row_origin              VARCHAR NOT NULL DEFAULT 'diet_spec',
+      row_policy              VARCHAR NOT NULL DEFAULT 'computed',
+      created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      archived_at             TIMESTAMP,
+      archive_reason          VARCHAR,
+      UNIQUE (diet_spec_id, nutrient_id)
+    )
+  ")
+
   invisible(con)
 }
 
@@ -459,7 +564,7 @@ init_feedr_db <- function(path = NULL,
       con            = con,
       path           = path,
       read_only      = read_only,
-      schema_version = 3L,
+      schema_version = 4L,
       opened_at      = Sys.time(),
       .ref           = ref
     ),

@@ -1729,7 +1729,7 @@ ingredients |>
   )
 ```
 This uses futures prices as the forward price anchor, then applies explicitly supplied volatility and
-correlation assumptions. Do not call this market-implied unless the package has actual options-implied
+correlation assumptions. Do e call this market-implied unless the package has actual options-implied
 volatility data from an options source.
 
 **Mode 3: Options-implied scenarios (Phase 2+)**

@@ -1,6 +1,6 @@
-test_that("schema_version is 3 after init", {
+test_that("schema_version is 4 after init", {
   db <- init_feedr_db(":memory:")
-  expect_equal(db$schema_version, 3L)
+  expect_equal(db$schema_version, 4L)
 })
 
 test_that("ingredient_nutrient_sources table exists with correct columns", {

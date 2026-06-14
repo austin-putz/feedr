@@ -1,3 +1,13 @@
+# feedr 0.0.0.9009
+
+- New: `close_feedr_db(session)` — explicitly closes the DuckDB connection held by a
+  `feedr_session`. The connection also closes automatically via a GC finalizer, but
+  calling this function makes intent clear and releases the file lock immediately.
+- New: `CLAUDE.md` at the repo root — ground-truth reference documenting what is
+  currently implemented: design philosophy, file structure, exported functions, S3
+  classes, full schema v3 table/column listing, views, migrations, and package options.
+  Contains a hard rule against planning content; all planning stays in `plans/`.
+
 # feedr 0.0.0.9008
 
 - New: four ingredient composition tables added to the schema (schema version bumped to 3).

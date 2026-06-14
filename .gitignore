@@ -1,5 +1,6 @@
 # general or R basics 
 *.Rcheck/
+.Rhistory
 *.tar.gz
 .Rproj.user
 # directories

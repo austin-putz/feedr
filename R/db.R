@@ -468,6 +468,29 @@ init_feedr_db <- function(path = NULL,
 }
 
 
+#' Close a feedr database connection
+#'
+#' Explicitly disconnects the DuckDB connection held by a `feedr_session`.
+#' The session is also closed automatically when garbage-collected, but calling
+#' this function makes the intent clear and releases the file lock immediately.
+#'
+#' @param session A `feedr_session` object returned by `open_feedr_db()`.
+#'
+#' @return Invisibly returns `NULL`.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' session <- open_feedr_db()
+#' close_feedr_db(session)
+#' }
+close_feedr_db <- function(session) {
+  stopifnot(inherits(session, "feedr_session"))
+  DBI::dbDisconnect(session$con)
+  invisible(NULL)
+}
+
+
 #' @export
 print.feedr_session <- function(x, ...) {
   header_text <- "-- feedr_session "

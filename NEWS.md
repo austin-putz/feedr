@@ -1,3 +1,8 @@
+# feedr 0.0.0.9011
+
+- `schema()` and `describe_table()`: renamed first argument from `.con` to `.db_con`
+  for clarity — users should not need to read the manual to understand what to pass.
+
 # feedr 0.0.0.9010
 
 - New: `schema(.con)` — prints a formatted overview of all tables and views in the

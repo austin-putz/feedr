@@ -34,7 +34,7 @@ care about the columns and object shape it receives, not about which exact table
 For example, a selected ingredient set might come from:
 
 - `get_table("ingredients")` filtered by species, production class, availability, or ingredient group
-- `get_table("nutrient_values")` filtered to a source system, lab batch, or ingredient symbols such as `CYD2` and `SBM48`
+- `get_table("ingredient_nutrient_values")` filtered to a source system, lab batch, or ingredient symbols such as `CYD2` and `SBM48`
 - `get_table("prices")` filtered to a location, supplier, price date, or forward scenario
 - `get_table("requirements")` filtered to a reference system, species, and production class
 - a user-created tibble, CSV import, spreadsheet import, or lab result table with the required columns
@@ -198,11 +198,11 @@ Use short ingredient symbols for user-facing code, like stock ticker symbols, wh
 `ingredient_id` values as stable database keys. For example, users should be able to write
 `filter(ingredient_symbol %in% c("CYD1", "CYD2", "SBM48"))` instead of long slug lists such as
 `"corn_yellow_dent_2"` and `"soymeal_48"`. Symbols must be unique within their namespace and should
-appear in user-facing tables and views, including `ingredients`, `nutrient_values`, `prices`, and
+appear in user-facing tables and views, including `ingredients`, `ingredient_nutrient_values`, `prices`, and
 formulation result tables. Raw fact tables can still store `ingredient_id`; `get_table()` should join
 or project `ingredient_symbol` for users.
 
-`nutrient_values`
+`ingredient_nutrient_values`
 
 | ingredient_id | ingredient_symbol | nutrient_id | nutrient_value | unit_id | basis | source_type | source_id | effective_date |
 |---|---|---|---:|---|---|---|---|---|
@@ -219,10 +219,10 @@ A resolved view should apply explicit precedence at query time:
 - The selected reference system is explicit, e.g. `reference_system = "NRC2012"` or `"NASEM2022"`
 
 ```sql
--- conceptual resolved nutrient values
+-- conceptual resolved ingredient nutrient values
 SELECT DISTINCT ON (ingredient_id, nutrient_id, project_id)
   ingredient_id, ingredient_symbol, nutrient_id, nutrient_value, unit_id, basis, source_type, source_id, batch_id, effective_date
-FROM nutrient_values
+FROM ingredient_nutrient_values
 JOIN ingredients USING (ingredient_id)
 WHERE archived_at IS NULL
 ORDER BY ingredient_id, nutrient_id, project_id,
@@ -236,7 +236,7 @@ ORDER BY ingredient_id, nutrient_id, project_id,
   created_at DESC
 ```
 
-**All formulation functions query resolved nutrient values, never raw `nutrient_values` directly.**
+**All formulation functions query resolved ingredient nutrient values, never raw `ingredient_nutrient_values` directly.**
 Users normally do not think about the layering; advanced users can inspect raw records for audit and
 provenance.
 
@@ -251,7 +251,7 @@ Key rules:
 ```r
 # User adds a lab value for corn ME — persists immediately, no save needed
 feedr |>
-  get_table("nutrient_values") |>
+  get_table("ingredient_nutrient_values") |>
   mutate_table(
     ingredient_symbol = "CYD2",
     nutrient_id = "me_swine",
@@ -267,7 +267,7 @@ feedr |>
 
 # Batch lab sheet — same generic write path
 feedr |>
-  get_table("nutrient_values") |>
+  get_table("ingredient_nutrient_values") |>
   mutate_table(
     .rows = readr::read_csv("oct2025_proximate.csv"),
     .mode = "insert",
@@ -278,11 +278,11 @@ feedr |>
 feedr |> get_table("ingredients") |> filter(ingredient_symbol == "CYD2")
 
 # See all raw values for an ingredient — compare user vs. reference
-feedr |> get_table("nutrient_values") |> filter(ingredient_symbol == "CYD2")
+feedr |> get_table("ingredient_nutrient_values") |> filter(ingredient_symbol == "CYD2")
 
 # Undo a specific user override by archiving the matching user rows
 feedr |>
-  get_table("nutrient_values") |>
+  get_table("ingredient_nutrient_values") |>
   filter(ingredient_symbol == "CYD2", nutrient_id == "me_swine", source_type == "user_lab") |>
   mutate_table(
     .mode = "archive",
@@ -325,7 +325,7 @@ update, archive, or add.
 
 ```r
 feedr |>
-  get_table("nutrient_values") |>
+  get_table("ingredient_nutrient_values") |>
   mutate_table(
     ingredient_symbol = "CYD2",
     nutrient_id = "me_swine",
@@ -341,7 +341,7 @@ The intended ergonomics are deliberately close to `dplyr::mutate()`:
 
 ```r
 feedr |>
-  get_table("nutrient_values") |>
+  get_table("ingredient_nutrient_values") |>
   mutate_table(
     ingredient_symbol = "CYD2",
     nutrient_id = "me_swine",
@@ -385,7 +385,7 @@ Rules:
 - Control arguments use dot prefixes (`.mode`, `.by`, `.rows`) so ordinary argument names map directly to table columns
 - Every non-dot argument is interpreted as a column in the selected table; unknown columns fail unless `.mode = "add_columns"`
 - `mutate_table()` must validate table name, required columns, column types, units, and key uniqueness before writing
-- `insert` is the preferred mode for audit-sensitive tables such as `nutrient_values`, `prices`, and lab/import records
+- `insert` is the preferred mode for audit-sensitive tables such as `ingredient_nutrient_values`, `prices`, and lab/import records
 - `update` is allowed only for explicitly mutable rows and metadata fields; it must fail on rows inserted by `seed_data()` that carry `row_policy = "protected"`
 - `archive` sets `archived_at` and audit metadata instead of deleting rows
 - `add_columns` can add user/project fields when allowed by table policy, but must record schema changes in an audit table
@@ -620,8 +620,8 @@ Unit and basis rules:
 - Any table with nutrient concentrations, prices, requirements, or inclusion values should expose `basis` as a normal filterable column
 - Errors and print methods should show both `unit_id` and `basis`
 
-#### `nutrient_values`
-Long-format nutrient composition table. One row per ingredient × nutrient × source record.
+#### `ingredient_nutrient_values`
+Long-format ingredient nutrient composition table. One row per ingredient × nutrient × source record.
 
 | column | type | notes |
 |---|---|---|
@@ -1156,7 +1156,7 @@ feedr uses operation-based function names and table-based source selection. Func
 describe what they do, not which reference system, species, or data source they use.
 
 Rules:
-- Use plural nouns for database tables: `ingredients`, `nutrients`, `nutrient_values`,
+- Use plural nouns for database tables: `ingredients`, `nutrients`, `ingredient_nutrient_values`,
   `requirements`, `requirement_equations`, `prices`, `price_scenarios`,
   `price_scenario_items`, `constraints`, `constraint_terms`
 - Use singular nouns for object constructors: `animal_profile()`, `diet_spec()`,
@@ -1164,7 +1164,7 @@ Rules:
 - Use verbs for transformations and actions: `get_table()`, `calculate_requirements()`,
   `validate_problem()`, `formulate_diet()`, `solve_diet()`, `explain_solution()`
 - Do not create table-specific noun accessors such as `ingredients()`, `prices()`, or
-  `nutrient_values()` when `feedr |> get_table("...")` provides the same behavior
+  `ingredient_nutrient_values()` when `feedr |> get_table("...")` provides the same behavior
 - Source names belong in data columns and `filter()` calls, not in function names
 - Species names belong in data columns and `filter()` calls, not in function names
 - Do not create source/species-specific functions such as `nasem_swine()`, `nrc_swine()`,
@@ -1591,7 +1591,7 @@ feedr must never silently choose a reference system. If `filter()` is used to na
 `requirement_equations` to a single `source`, that choice is explicit and belongs to the user's script.
 If the user does not filter and multiple sources are present, `calculate_requirements()` must error with
 a clear message listing the available sources and asking the user to select one. The same applies to
-`nutrient_values`: if `source_type` is ambiguous and precedence rules select one, the selection must be
+`ingredient_nutrient_values`: if `source_type` is ambiguous and precedence rules select one, the selection must be
 visible, not hidden.
 
 ### Example: transparent requirement calculation output
@@ -1914,7 +1914,7 @@ Users routinely have their own lab analyses that differ from NRC book values.
 ```r
 # Add lab analysis rows without modifying protected reference rows
 feedr |>
-  get_table("nutrient_values") |>
+  get_table("ingredient_nutrient_values") |>
   mutate_table(
     .rows = readr::read_csv("lab_analysis_oct2025.csv"),
     .mode = "insert",

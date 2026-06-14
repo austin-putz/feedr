@@ -131,6 +131,107 @@ init_feedr_db <- function(path = NULL,
       )
     ")
   }
+
+  # v2 → v3: add ingredient composition tables
+  if (!DBI::dbExistsTable(con, "ingredient_nutrient_sources")) {
+    message("feedr: Migrating schema v2 → v3 (adding ingredient composition tables)")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS ingredient_nutrient_sources (
+        source_id        VARCHAR PRIMARY KEY,
+        source_type      VARCHAR NOT NULL,
+        display_name     VARCHAR NOT NULL,
+        citation         VARCHAR,
+        publication_year INTEGER,
+        version          VARCHAR,
+        organization     VARCHAR,
+        url              VARCHAR,
+        license_notes    VARCHAR,
+        created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    ")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS ingredient_symbols (
+        ingredient_id     VARCHAR NOT NULL REFERENCES ingredients(ingredient_id),
+        ingredient_symbol VARCHAR NOT NULL,
+        symbol_type       VARCHAR NOT NULL DEFAULT 'alias',
+        project_id        VARCHAR,
+        source_id         VARCHAR,
+        active            BOOLEAN DEFAULT TRUE,
+        created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (ingredient_id, ingredient_symbol, symbol_type)
+      )
+    ")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS ingredient_tags (
+        ingredient_id VARCHAR NOT NULL REFERENCES ingredients(ingredient_id),
+        tag           VARCHAR NOT NULL,
+        PRIMARY KEY (ingredient_id, tag)
+      )
+    ")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS ingredient_nutrient_values (
+        value_id            VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+        ingredient_id       VARCHAR NOT NULL REFERENCES ingredients(ingredient_id),
+        nutrient_id         VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+        nutrient_value      DOUBLE  NOT NULL,
+        unit_id             VARCHAR NOT NULL REFERENCES units(unit_id),
+        basis               VARCHAR NOT NULL,
+        source_id           VARCHAR NOT NULL REFERENCES ingredient_nutrient_sources(source_id),
+        value_kind          VARCHAR NOT NULL,
+        project_id          VARCHAR,
+        batch_id            VARCHAR,
+        observed_date       DATE,
+        publication_date    DATE,
+        effective_date      DATE NOT NULL,
+        uncertainty_sd      DOUBLE,
+        uncertainty_cv      DOUBLE,
+        sample_count        INTEGER,
+        supersedes_value_id VARCHAR,
+        row_origin          VARCHAR NOT NULL,
+        row_policy          VARCHAR NOT NULL DEFAULT 'append_only',
+        archived_at         TIMESTAMP,
+        archive_reason      VARCHAR,
+        imported_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    ")
+
+    DBI::dbExecute(con, "
+      CREATE OR REPLACE VIEW ingredient_nutrient_values_resolved AS
+      SELECT * EXCLUDE (rn)
+      FROM (
+        SELECT
+          inv.*,
+          i.ingredient_symbol,
+          s.source_type,
+          ROW_NUMBER() OVER (
+            PARTITION BY inv.ingredient_id, inv.nutrient_id, inv.basis, inv.project_id
+            ORDER BY
+              CASE s.source_type
+                WHEN 'project_override' THEN 1
+                WHEN 'user_lab'         THEN 2
+                WHEN 'reference'        THEN 3
+                WHEN 'calculated'       THEN 4
+                ELSE                         5
+              END,
+              inv.effective_date   DESC,
+              inv.observed_date    DESC,
+              inv.created_at       DESC,
+              inv.value_id
+          ) AS rn
+        FROM ingredient_nutrient_values inv
+        JOIN ingredients i                 USING (ingredient_id)
+        JOIN ingredient_nutrient_sources s USING (source_id)
+        WHERE inv.archived_at IS NULL
+      ) ranked
+      WHERE rn = 1
+    ")
+  }
 }
 
 
@@ -216,6 +317,102 @@ init_feedr_db <- function(path = NULL,
   ")
 
   DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS ingredient_nutrient_sources (
+      source_id        VARCHAR PRIMARY KEY,
+      source_type      VARCHAR NOT NULL,
+      display_name     VARCHAR NOT NULL,
+      citation         VARCHAR,
+      publication_year INTEGER,
+      version          VARCHAR,
+      organization     VARCHAR,
+      url              VARCHAR,
+      license_notes    VARCHAR,
+      created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  ")
+
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS ingredient_symbols (
+      ingredient_id     VARCHAR NOT NULL REFERENCES ingredients(ingredient_id),
+      ingredient_symbol VARCHAR NOT NULL,
+      symbol_type       VARCHAR NOT NULL DEFAULT 'alias',
+      project_id        VARCHAR,
+      source_id         VARCHAR,
+      active            BOOLEAN DEFAULT TRUE,
+      created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (ingredient_id, ingredient_symbol, symbol_type)
+    )
+  ")
+
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS ingredient_tags (
+      ingredient_id VARCHAR NOT NULL REFERENCES ingredients(ingredient_id),
+      tag           VARCHAR NOT NULL,
+      PRIMARY KEY (ingredient_id, tag)
+    )
+  ")
+
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS ingredient_nutrient_values (
+      value_id            VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+      ingredient_id       VARCHAR NOT NULL REFERENCES ingredients(ingredient_id),
+      nutrient_id         VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+      nutrient_value      DOUBLE  NOT NULL,
+      unit_id             VARCHAR NOT NULL REFERENCES units(unit_id),
+      basis               VARCHAR NOT NULL,
+      source_id           VARCHAR NOT NULL REFERENCES ingredient_nutrient_sources(source_id),
+      value_kind          VARCHAR NOT NULL,
+      project_id          VARCHAR,
+      batch_id            VARCHAR,
+      observed_date       DATE,
+      publication_date    DATE,
+      effective_date      DATE NOT NULL,
+      uncertainty_sd      DOUBLE,
+      uncertainty_cv      DOUBLE,
+      sample_count        INTEGER,
+      supersedes_value_id VARCHAR,
+      row_origin          VARCHAR NOT NULL,
+      row_policy          VARCHAR NOT NULL DEFAULT 'append_only',
+      archived_at         TIMESTAMP,
+      archive_reason      VARCHAR,
+      imported_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  ")
+
+  DBI::dbExecute(con, "
+    CREATE OR REPLACE VIEW ingredient_nutrient_values_resolved AS
+    SELECT * EXCLUDE (rn)
+    FROM (
+      SELECT
+        inv.*,
+        i.ingredient_symbol,
+        s.source_type,
+        ROW_NUMBER() OVER (
+          PARTITION BY inv.ingredient_id, inv.nutrient_id, inv.basis, inv.project_id
+          ORDER BY
+            CASE s.source_type
+              WHEN 'project_override' THEN 1
+              WHEN 'user_lab'         THEN 2
+              WHEN 'reference'        THEN 3
+              WHEN 'calculated'       THEN 4
+              ELSE                         5
+            END,
+            inv.effective_date   DESC,
+            inv.observed_date    DESC,
+            inv.created_at       DESC,
+            inv.value_id
+        ) AS rn
+      FROM ingredient_nutrient_values inv
+      JOIN ingredients i                 USING (ingredient_id)
+      JOIN ingredient_nutrient_sources s USING (source_id)
+      WHERE inv.archived_at IS NULL
+    ) ranked
+    WHERE rn = 1
+  ")
+
+  DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS nutrient_requirements (
       requirement_id      VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
       feeding_phase_id    VARCHAR NOT NULL
@@ -262,7 +459,7 @@ init_feedr_db <- function(path = NULL,
       con            = con,
       path           = path,
       read_only      = read_only,
-      schema_version = 2L,
+      schema_version = 3L,
       opened_at      = Sys.time(),
       .ref           = ref
     ),

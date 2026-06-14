@@ -46,7 +46,7 @@ clearer because:
   requirements
 - `get_table("nutrient_requirements")` reads clearly in pipe code
 - Aligns with the pattern of prefixed table names already used:
-  `nutrient_values`, `nutrient_variability`
+  `ingredient_nutrient_values`, `nutrient_variability`
 
 The `requirement_equations` table name stays as-is because it is already unambiguous.
 
@@ -941,7 +941,7 @@ Values are **illustrative approximations**, not authoritative NRC/NASEM values.
 The `nutrients` table is already defined in PLAN.md. It is the canonical nutrient metadata
 registry — `nutrient_id`, `display_name`, `nutrient_class`, `species`, `default_unit_id`,
 `lp_unit_id`, `has_upper_bound_concern`, `description`. Every `nutrient_id` used in
-`nutrient_requirements`, `nutrient_values`, or `requirement_equations` must have a matching row
+`nutrient_requirements`, `ingredient_nutrient_values`, or `requirement_equations` must have a matching row
 there. Below are the entries that need to be added for the multi-species scope of this document.
 
 ### Energy
@@ -1065,7 +1065,7 @@ P forms (STTD-P for swine, NPP for poultry, digestible P for fish)
 ## 9. Implementation Priority
 
 1. **Lock nutrient taxonomy first** — the `nutrient_id` values in the `nutrients` table are FK
-   targets for `nutrient_requirements`, `nutrient_values`, and the LP matrix. They must be stable
+   targets for `nutrient_requirements`, `ingredient_nutrient_values`, and the LP matrix. They must be stable
    before `seed_data()` is called.
 2. **Start with swine** — most complete NASEM 2022 equation support, which is the MVP target
    species. Use the swine rows to validate the table structure: `seed_data(feedr, species = "swine")`.

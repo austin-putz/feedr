@@ -1,3 +1,31 @@
+# feedr 0.0.0.9008
+
+- New: four ingredient composition tables added to the schema (schema version bumped to 3).
+  - `ingredient_nutrient_sources` — source registry for ingredient nutrient data; stores
+    citations, licensing notes, publication year, organization, and version metadata.
+    `source_id` is the FK target for `ingredient_nutrient_values`.
+  - `ingredient_nutrient_values` — long-format fact table for ingredient nutrient
+    composition. One row per ingredient × nutrient × source record. Key design: append-only
+    for reference and lab values; formulation uses the resolved view, not this table
+    directly. Includes `value_kind` (`reference_mean`, `lab_observation`, `user_estimate`,
+    `project_override`, `calculated`), `basis`, `effective_date`, `observed_date`,
+    `publication_date`, uncertainty columns (`uncertainty_sd`, `uncertainty_cv`,
+    `sample_count`), `supersedes_value_id` for audit trails, and `row_policy`
+    (`protected`, `append_only`, `mutable`) replacing a `locked` boolean.
+  - `ingredient_symbols` — alias and project-specific shorthand codes per ingredient.
+    Composite PK on `(ingredient_id, ingredient_symbol, symbol_type)`.
+  - `ingredient_tags` — many-to-many ingredient classification tags for filtering
+    ingredient sets (e.g. `"corn_soy_base"`, `"nursery_safe"`).
+- New: `ingredient_nutrient_values_resolved` view — selects the single active value per
+  ingredient × nutrient × basis × project using a `ROW_NUMBER()` window function.
+  Precedence: `project_override` > `user_lab` > `reference` > `calculated`, then
+  `effective_date DESC`. All formulation functions should query this view, never the raw
+  `ingredient_nutrient_values` table directly.
+- New: `init_feedr_db(migrate = TRUE)` now includes the v2 → v3 migration. Existing
+  databases gain all four tables and the resolved view without data loss.
+- New: `tests/testthat/test-ingredient-tables.R` with 16 tests covering table/view
+  existence, column schemas, FK enforcement, precedence resolution, and migration path.
+
 # feedr 0.0.0.9007
 
 - New: `nutrient_requirements` table added to the schema (schema version bumped to 2).

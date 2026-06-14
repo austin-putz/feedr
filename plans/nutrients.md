@@ -3,13 +3,13 @@
 ## Overview
 
 The `nutrients` table is the **canonical nutrient metadata registry**. Every nutrient that
-appears in `nutrient_values`, `nutrient_requirements`, or `requirement_equations` must have
+appears in `ingredient_nutrient_values`, `nutrient_requirements`, or `requirement_equations` must have
 exactly one row here. This table stores *what a nutrient is* — its stable identifier, display
 name, class, default unit, LP unit, and formulation flags.
 
 **What this table does NOT store:**
 
-- Nutrient values in ingredients → `nutrient_values`
+- Nutrient values in ingredients → `ingredient_nutrient_values`
 - Minimum or maximum requirement levels → `nutrient_requirements`
 - Equations that predict requirements → `requirement_equations`
 
@@ -36,7 +36,7 @@ Species differences in *how much* calcium is needed belong entirely in `nutrient
 not in the identity of the nutrient itself.
 
 **The rule:**
-> A nutrient should be `species = NULL` if a single value in `nutrient_values` for that
+> A nutrient should be `species = NULL` if a single value in `ingredient_nutrient_values` for that
 > nutrient carries the same meaning regardless of which species will consume the feed.
 > A nutrient needs a species qualifier only if the *measurement concept or digestibility
 > protocol* differs meaningfully by species.
@@ -141,7 +141,7 @@ are built in the same unit. This must be consistent and tested.
 
 **`default_basis`** — The basis in which this nutrient's values are most commonly reported.
 This is informational for users and defaults; the definitive basis for any individual value
-is always in `nutrient_values.basis` or `nutrient_requirements.basis`. Setting
+is always in `ingredient_nutrient_values.basis` or `nutrient_requirements.basis`. Setting
 `default_basis` avoids repeated filtering in common single-species workflows.
 
 **`has_upper_bound_concern`** — Purely a **display/sort hint**. `TRUE` means "this nutrient
@@ -404,7 +404,7 @@ may not efficiently activate the plant-derived menaquinone form of K.
 > - D2 is largely inactive in poultry — a poultry formulation must use D3 only
 > - D2 is partially active in swine and ruminants but at lower potency than D3
 > - Premix suppliers label them separately; formulation records should match
-> If D2 is listed separately in `nutrient_values` for an ingredient, it will not
+> If D2 is listed separately in `ingredient_nutrient_values` for an ingredient, it will not
 > accidentally satisfy a `vit_d3` requirement in the LP.
 
 ### 4.8 Water-Soluble Vitamins
@@ -545,12 +545,12 @@ If solver_basis = "dry_matter":
 ```
 
 **What happens when `dm` is missing:**
-If an ingredient has no `dm` value in `nutrient_values` and the solver needs to convert
+If an ingredient has no `dm` value in `ingredient_nutrient_values` and the solver needs to convert
 between bases, the LP builder must fail with:
 
 ```
 Error: Cannot convert Corn (CYD2) from as_fed to dry_matter basis —
-no dry matter value found in nutrient_values.
+no dry matter value found in ingredient_nutrient_values.
 Add a dm value for CYD2 or reformulate on an as_fed basis.
 ```
 
@@ -739,8 +739,8 @@ These mistakes make the table harder to query and create false constraints:
 |---|---|---|
 | Adding a `requirement_min` or `requirement_max` column | Per-species, per-phase amounts are not nutrient metadata | `nutrient_requirements` |
 | Adding a species-level `cu_max_sheep = 10` field | Would apply to all species using `cu` | `nutrient_requirements.requirement_max` where `feeding_phase_id` is a sheep phase |
-| Encoding dietary basis into the `nutrient_id` (e.g., `ca_dm`) | Basis is a column in `nutrient_values` and `nutrient_requirements` | `nutrient_values.basis`, `nutrient_requirements.basis` |
-| Adding ingredient-level average values | Values belong in `nutrient_values` | `nutrient_values` |
+| Encoding dietary basis into the `nutrient_id` (e.g., `ca_dm`) | Basis is a column in `ingredient_nutrient_values` and `nutrient_requirements` | `ingredient_nutrient_values.basis`, `nutrient_requirements.basis` |
+| Adding ingredient-level average values | Values belong in `ingredient_nutrient_values` | `ingredient_nutrient_values` |
 | A "species-allowed" list column | Species is already in `feeding_phases`; no nutrient should be forbidden to a species at the metadata level | Filter `nutrient_requirements` by `feeding_phase_id.species` |
 | Separate IDs for the same molecule at different doses (e.g., `cu_growth_swine` for pharmacological Cu) | These are two requirement rows for the same nutrient, distinguished by `notes` and `source` | `nutrient_requirements` with distinct rows and clear `notes` |
 
@@ -798,7 +798,7 @@ The LP builder treats unit conversion as a required step, not an optional one.
    `nutrients`. Fail the insertion if any are missing.
 
 4. **Do not add `nutrients` rows speculatively** — only add rows that have corresponding
-   `nutrient_values` or `nutrient_requirements` entries. Unused rows create confusion in
+   `ingredient_nutrient_values` or `nutrient_requirements` entries. Unused rows create confusion in
    `get_table("nutrients")` output.
 
 5. **Lock reference rows inserted by `seed_data()`** — `seed_data()` sets `locked = TRUE` for
@@ -840,7 +840,7 @@ CREATE TABLE nutrient_unit_conversions (
 
 For most import workflows, `vit_e` data arrives in IU. The import helper must look up the
 conversion factor by `chemical_form` (or default to the synthetic form if form is unknown)
-before writing to `nutrient_values` in `mg_kg`. The LP matrix then uses `mg_kg`
+before writing to `ingredient_nutrient_values` in `mg_kg`. The LP matrix then uses `mg_kg`
 uniformly.
 
 Vitamins A and D remain in `iu_kg` as `lp_unit_id` because IU is still the dominant
@@ -925,7 +925,7 @@ not have to know alias resolution is happening silently.
 6. **Migrate legacy IDs** — any existing rows using `sttd_p`, `p`, `na_mineral` must
    be updated or aliased via `nutrient_aliases` before new reference data is inserted.
 7. **Do not add `nutrients` rows speculatively** — only add what has corresponding
-   `nutrient_values` or `nutrient_requirements` entries.
+   `ingredient_nutrient_values` or `nutrient_requirements` entries.
 8. **Lock all reference rows** — `seed_data()` sets `locked = TRUE` on every row it inserts.
    Users add custom rows with `locked = FALSE`.
 

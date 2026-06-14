@@ -49,7 +49,7 @@ High-Level Take
 
   4. Basis conversion needs more design
 
-  The plan correctly says basis belongs on nutrient_values and nutrient_requirements, but LP normalization only discusses unit conversion. As-fed vs dry-matter conversion is a separate operation and requires dry matter
+  The plan correctly says basis belongs on ingredient_nutrient_values and nutrient_requirements, but LP normalization only discusses unit conversion. As-fed vs dry-matter conversion is a separate operation and requires dry matter
   information.
 
   This is especially important because the nutrient list defaults many shared nutrients to as_fed, while ruminant requirements are often dry_matter. A dry-matter requirement cannot be safely compared to as-fed

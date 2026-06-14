@@ -14,8 +14,9 @@ from options: \code{getOption("feedr.db_path")} (directory, default
 \code{"feedr.db"}). Any file extension is accepted — common choices are
 \code{feedr.db}, \code{feedr.duckdb}, or a project-specific name like \code{swine.db}.}
 
-\item{migrate}{If \code{TRUE}, run pending schema migrations. Currently a no-op;
-no migrations are defined yet.}
+\item{migrate}{If \code{TRUE}, run pending schema migrations on an existing
+database (e.g. add tables introduced in a newer schema version). Has no
+effect on new databases or on read-only connections.}
 
 \item{read_only}{Open in read-only mode. Cannot be used when the file does
 not yet exist.}
@@ -31,8 +32,8 @@ Creates or opens a DuckDB database and returns a \code{feedr_session} object.
 \details{
 Two primary uses:
 \itemize{
-\item \strong{New database} — creates the file and builds the initial schema.
-Use a future \code{seed_data()} function to populate it with reference values.
+\item \strong{New database} — creates the file and builds the initial schema.  Use a
+future \code{seed_data()} function to populate it with reference values.
 \item \strong{Existing database} — opens the file as-is, prints the exact path with
 OS-specific instructions to delete it if you want to start over. The file
 is never overwritten through this function.

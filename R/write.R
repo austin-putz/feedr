@@ -126,7 +126,7 @@
 #'
 #' @examples
 #' \dontrun{
-#' db <- init_feedr_db(seed = TRUE)
+#' db <- init_feedr_db()
 #'
 #' # VARCHAR DEFAULT 'swine'
 #' db |> get_table("ingredients") |> mutate_table(species = "swine")
@@ -263,7 +263,7 @@ mutate_table <- function(.data, ..., .default = TRUE) {
 #'
 #' @examples
 #' \dontrun{
-#' db <- init_feedr_db(seed = TRUE)
+#' db <- init_feedr_db()
 #'
 #' # Inline - one row at a time
 #' db |> get_table("ingredients") |>
@@ -372,17 +372,6 @@ append_rows <- function(.data, ..., .rows = NULL, .replace = FALSE) {
     }
 
     pk_vals <- as.character(new_df[[pk_col]])
-
-    # Protection check - hard stop if any incoming PK is protected
-    checked <- .feedr_filter_protected(con, tbl_name, pk_col, pk_vals)
-    if (length(checked$protected) > 0L) {
-      stop(
-        "Cannot replace protected row(s): ",
-        paste0("'", checked$protected, "'", collapse = ", "), ".\n",
-        "  These rows have row_policy = 'protected' and are read-only.",
-        call. = FALSE
-      )
-    }
 
     quoted_pks <- paste0("'", gsub("'", "''", pk_vals), "'", collapse = ", ")
 
@@ -500,7 +489,7 @@ append_rows <- function(.data, ..., .rows = NULL, .replace = FALSE) {
 #'
 #' @examples
 #' \dontrun{
-#' db <- init_feedr_db(seed = TRUE)
+#' db <- init_feedr_db()
 #'
 #' # Add the required column first
 #' db |> get_table("ingredients") |> mutate_table(archived_at = as.POSIXct(NA))
@@ -580,9 +569,6 @@ archive_rows <- function(.data, .reason = NULL, .by = NULL) {
 #' * **Tibble** - pass `.rows` (a data frame) and `.by` (the key column) to
 #'   update each row individually.
 #'
-#' If the table has a `row_policy` column, rows marked `'protected'` are
-#' skipped with a warning.
-#'
 #' @param .data A `feedr_tbl` from [get_table()], optionally pre-filtered.
 #' @param ...   Named scalar column-value pairs, e.g. `active = FALSE`.
 #'   Vectors are rejected. Cannot be combined with `.rows`.
@@ -595,7 +581,7 @@ archive_rows <- function(.data, .reason = NULL, .by = NULL) {
 #'
 #' @examples
 #' \dontrun{
-#' db <- init_feedr_db(seed = TRUE)
+#' db <- init_feedr_db()
 #'
 #' # Scalar mode - set active = FALSE for all mineral ingredients
 #' db |> get_table("ingredients") |>
@@ -679,16 +665,7 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
       return(invisible(.data))
     }
 
-    # Protection check
-    pk_vals  <- .feedr_filter_protected(con, tbl_name, pk_col, pk_vals)
-    n_target <- length(pk_vals$ok)
-
-    if (n_target == 0L) {
-      stop(
-        "All targeted rows are protected. No updates were made in '", tbl_name, "'.",
-        call. = FALSE
-      )
-    }
+    n_target <- length(pk_vals)
 
     set_clause <- paste(
       vapply(col_names, function(cn) {
@@ -697,7 +674,7 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
       collapse = ", "
     )
     quoted_pks <- paste0(
-      "'", gsub("'", "''", as.character(pk_vals$ok)), "'",
+      "'", gsub("'", "''", as.character(pk_vals)), "'",
       collapse = ", "
     )
 
@@ -717,18 +694,6 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
       "feedr: Updated ", n_target, " row(s) in '", tbl_name,
       "' - set ", set_desc, "."
     )
-
-    if (length(pk_vals$protected) > 0L) {
-      warning(
-        "feedr WARNING: ", length(pk_vals$protected), " row(s) skipped:\n",
-        paste0(
-          "  ", pk_col, " '", pk_vals$protected,
-          "' - row_policy = 'protected' (read-only)",
-          collapse = "\n"
-        ),
-        call. = FALSE
-      )
-    }
 
   } else {
     # --- Tibble mode ---
@@ -764,38 +729,11 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
       )
     }
 
-    n_ok      <- 0L
-    n_skipped <- 0L
-    skip_msgs <- character(0)
+    n_ok <- 0L
 
     DBI::dbWithTransaction(con, {
       for (i in seq_len(nrow(.rows))) {
-        row_key <- .rows[[pk_col]][[i]]
-
-        # Protection check for this individual row
-        if ("row_policy" %in% fields) {
-          policy <- DBI::dbGetQuery(con, paste0(
-            "SELECT row_policy FROM \"", tbl_name, "\" WHERE \"", pk_col,
-            "\" = '", gsub("'", "''", as.character(row_key)), "'"
-          ))
-          if (nrow(policy) > 0L &&
-              identical(policy$row_policy[[1L]], "protected")) {
-            n_skipped <- n_skipped + 1L
-            skip_msgs <- c(skip_msgs, paste0(
-              "  ", pk_col, " '", row_key,
-              "' - row_policy = 'protected' (read-only)"
-            ))
-            next
-          }
-          if (nrow(policy) == 0L) {
-            n_skipped <- n_skipped + 1L
-            skip_msgs <- c(skip_msgs, paste0(
-              "  ", pk_col, " '", row_key, "' - no matching row found in table"
-            ))
-            next
-          }
-        }
-
+        row_key    <- .rows[[pk_col]][[i]]
         set_clause <- paste(
           vapply(update_cols, function(cn) {
             paste0("\"", cn, "\" = ", .feedr_val_to_sql(.rows[[cn]][[i]]))
@@ -815,14 +753,6 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
       "feedr: Updated ", n_ok, " row(s) in '", tbl_name,
       "' via .by = '", pk_col, "'."
     )
-
-    if (n_skipped > 0L) {
-      warning(
-        "feedr WARNING: ", n_skipped, " row(s) skipped:\n",
-        paste(skip_msgs, collapse = "\n"),
-        call. = FALSE
-      )
-    }
   }
 
   invisible(.data)
@@ -844,10 +774,6 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
 #' * **Wipe** (`.all = TRUE`) - deletes every row in the table. A WARNING is
 #'   printed before any data is removed.
 #'
-#' If the table has a `row_policy` column, rows marked `'protected'` are
-#' skipped in filtered mode (with a warning) or cause a hard stop in `.all`
-#' mode.
-#'
 #' @param .data A `feedr_tbl` from [get_table()], optionally pre-filtered.
 #' @param .by   Column name to use as the row key for the `WHERE` clause.
 #'   Defaults to auto-detecting the primary key. Ignored when `.all = TRUE`.
@@ -860,7 +786,7 @@ update_rows <- function(.data, ..., .rows = NULL, .by = NULL) {
 #'
 #' @examples
 #' \dontrun{
-#' db <- init_feedr_db(seed = TRUE)
+#' db <- init_feedr_db()
 #'
 #' # Delete one row matched by a filter
 #' db |> get_table("ingredients") |>
@@ -880,24 +806,6 @@ drop_rows <- function(.data, .by = NULL, .all = FALSE) {
 
   # --- .all = TRUE: wipe the entire table ---
   if (isTRUE(.all)) {
-
-    # Hard stop if any protected rows exist — wiping while silently skipping
-    # them would leave the table non-empty against the user's expectation.
-    fields <- DBI::dbListFields(con, tbl_name)
-    if ("row_policy" %in% fields) {
-      n_protected <- DBI::dbGetQuery(con, paste0(
-        "SELECT COUNT(*) AS n FROM \"", tbl_name, "\" ",
-        "WHERE row_policy = 'protected'"
-      ))$n
-      if (n_protected > 0L) {
-        stop(
-          "Cannot use .all = TRUE: ", n_protected, " row(s) in '", tbl_name,
-          "' are protected (row_policy = 'protected').\n",
-          "  Remove protection first, then retry.",
-          call. = FALSE
-        )
-      }
-    }
 
     n_rows <- DBI::dbGetQuery(
       con, paste0("SELECT COUNT(*) AS n FROM \"", tbl_name, "\"")
@@ -932,17 +840,8 @@ drop_rows <- function(.data, .by = NULL, .all = FALSE) {
     return(invisible(.data))
   }
 
-  checked <- .feedr_filter_protected(con, tbl_name, pk_col, pk_vals)
-
-  if (length(checked$ok) == 0L) {
-    stop(
-      "All targeted rows are protected and cannot be deleted from '", tbl_name, "'.",
-      call. = FALSE
-    )
-  }
-
   quoted <- paste0(
-    "'", gsub("'", "''", as.character(checked$ok)), "'", collapse = ", "
+    "'", gsub("'", "''", as.character(pk_vals)), "'", collapse = ", "
   )
 
   DBI::dbWithTransaction(con, {
@@ -952,48 +851,16 @@ drop_rows <- function(.data, .by = NULL, .all = FALSE) {
   })
 
   message(
-    "feedr: Permanently deleted ", length(checked$ok), " row(s) from '", tbl_name, "'."
+    "feedr: Permanently deleted ", length(pk_vals), " row(s) from '", tbl_name, "'."
   )
-
-  if (length(checked$protected) > 0L) {
-    warning(
-      "feedr WARNING: ", length(checked$protected), " row(s) skipped:\n",
-      paste0(
-        "  ", pk_col, " '", checked$protected,
-        "' - row_policy = 'protected' (read-only)",
-        collapse = "\n"
-      ),
-      call. = FALSE
-    )
-  }
 
   invisible(.data)
 }
 
 
 # ---------------------------------------------------------------------------
-# Internal: protection filter + SQL value formatter
+# Internal: SQL value formatter
 # ---------------------------------------------------------------------------
-
-# Returns list(ok = pk_vals, protected = pk_vals) after checking row_policy.
-.feedr_filter_protected <- function(con, tbl_name, pk_col, pk_vals) {
-  fields <- DBI::dbListFields(con, tbl_name)
-  if (!"row_policy" %in% fields) {
-    return(list(ok = pk_vals, protected = character(0)))
-  }
-  quoted <- paste0(
-    "'", gsub("'", "''", as.character(pk_vals)), "'", collapse = ", "
-  )
-  policy_tbl <- DBI::dbGetQuery(con, paste0(
-    "SELECT \"", pk_col, "\", row_policy FROM \"", tbl_name, "\" ",
-    "WHERE \"", pk_col, "\" IN (", quoted, ")"
-  ))
-  protected <- as.character(
-    policy_tbl[[pk_col]][policy_tbl$row_policy == "protected"]
-  )
-  ok <- pk_vals[!pk_vals %in% protected]
-  list(ok = ok, protected = protected)
-}
 
 # Format an R scalar as a SQL literal for SET clauses.
 .feedr_val_to_sql <- function(val) {

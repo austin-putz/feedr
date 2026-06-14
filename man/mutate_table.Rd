@@ -36,7 +36,7 @@ The R value you provide determines the column type \strong{and}, when
 }
 \examples{
 \dontrun{
-db <- init_feedr_db(seed = TRUE)
+db <- init_feedr_db()
 
 # VARCHAR DEFAULT 'swine'
 db |> get_table("ingredients") |> mutate_table(species = "swine")

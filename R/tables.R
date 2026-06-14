@@ -23,7 +23,7 @@
 #'
 #' @examples
 #' \dontrun{
-#' db <- init_feedr_db(seed = TRUE)
+#' db <- init_feedr_db()
 #'
 #' # View a table
 #' db |> get_table("ingredients")

@@ -3,8 +3,8 @@
 #' Creates or opens a DuckDB database and returns a `feedr_session` object.
 #'
 #' Two primary uses:
-#' - **New database** — creates the file, builds the initial schema, and
-#'   optionally seeds example rows.
+#' - **New database** — creates the file and builds the initial schema.  Use a
+#'   future `seed_data()` function to populate it with reference values.
 #' - **Existing database** — opens the file as-is, prints the exact path with
 #'   OS-specific instructions to delete it if you want to start over. The file
 #'   is never overwritten through this function.
@@ -15,9 +15,6 @@
 #'   `":memory:"`) joined with `getOption("feedr.db_name")` (filename, default
 #'   `"feedr.db"`). Any file extension is accepted — common choices are
 #'   `feedr.db`, `feedr.duckdb`, or a project-specific name like `swine.db`.
-#' @param seed If `TRUE` and the database is new (or in-memory), populate it
-#'   with example rows for `units`, `feeding_phases`, `nutrients`, and `ingredients`.
-#'   No licensed NRC/NASEM values are included — rows are synthetic examples.
 #' @param migrate If `TRUE`, run pending schema migrations. Currently a no-op;
 #'   no migrations are defined yet.
 #' @param read_only Open in read-only mode. Cannot be used when the file does
@@ -28,7 +25,6 @@
 #'   closes automatically when the session object is garbage-collected.
 #' @export
 init_feedr_db <- function(path = NULL,
-                           seed = FALSE,
                            migrate = FALSE,
                            read_only = FALSE) {
 
@@ -42,7 +38,6 @@ init_feedr_db <- function(path = NULL,
   if (in_memory) {
     con <- DBI::dbConnect(duckdb::duckdb(), dbdir = ":memory:", read_only = FALSE)
     .feedr_create_schema(con)
-    if (seed) .feedr_seed_data(con)
     return(.feedr_new_session(con, ":memory:", read_only = FALSE))
   }
 
@@ -60,7 +55,6 @@ init_feedr_db <- function(path = NULL,
     dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
     con <- DBI::dbConnect(duckdb::duckdb(), dbdir = path, read_only = FALSE)
     .feedr_create_schema(con)
-    if (seed) .feedr_seed_data(con)
     message("feedr: Created new database at:\n  ", path)
   } else {
     con <- DBI::dbConnect(duckdb::duckdb(), dbdir = path, read_only = read_only)
@@ -126,13 +120,42 @@ init_feedr_db <- function(path = NULL,
 
   DBI::dbExecute(con, "
     CREATE TABLE IF NOT EXISTS nutrients (
-      nutrient_id     VARCHAR PRIMARY KEY,
-      display_name    VARCHAR NOT NULL,
-      nutrient_class  VARCHAR,
-      species         VARCHAR,
-      basis           VARCHAR,
-      default_unit_id VARCHAR REFERENCES units(unit_id),
-      description     VARCHAR
+      nutrient_id             VARCHAR PRIMARY KEY,
+      display_name            VARCHAR NOT NULL,
+      nutrient_class          VARCHAR NOT NULL,
+      species                 VARCHAR,
+      default_unit_id         VARCHAR NOT NULL REFERENCES units(unit_id),
+      lp_unit_id              VARCHAR NOT NULL REFERENCES units(unit_id),
+      default_basis           VARCHAR NOT NULL,
+      has_upper_bound_concern BOOLEAN DEFAULT FALSE,
+      description             VARCHAR,
+      active                  BOOLEAN DEFAULT TRUE,
+      locked                  BOOLEAN DEFAULT TRUE,
+      created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  ")
+
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS nutrient_unit_conversions (
+      nutrient_id   VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+      from_unit_id  VARCHAR NOT NULL REFERENCES units(unit_id),
+      to_unit_id    VARCHAR NOT NULL REFERENCES units(unit_id),
+      factor        DOUBLE NOT NULL,
+      chemical_form VARCHAR NOT NULL DEFAULT 'generic',
+      notes         VARCHAR,
+      source        VARCHAR,
+      active        BOOLEAN DEFAULT TRUE,
+      PRIMARY KEY (nutrient_id, from_unit_id, to_unit_id, chemical_form)
+    )
+  ")
+
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS nutrient_aliases (
+      alias        VARCHAR PRIMARY KEY,
+      nutrient_id  VARCHAR NOT NULL REFERENCES nutrients(nutrient_id),
+      source       VARCHAR,
+      active       BOOLEAN DEFAULT TRUE,
+      notes        VARCHAR
     )
   ")
 
@@ -149,76 +172,6 @@ init_feedr_db <- function(path = NULL,
       updated_at        TIMESTAMP DEFAULT current_timestamp
     )
   ")
-
-  invisible(con)
-}
-
-
-# Seed example rows -------------------------------------------------------------
-
-.feedr_seed_data <- function(con) {
-
-  DBI::dbAppendTable(con, "units", data.frame(
-    unit_id     = c("pct",          "kcal_kg",      "fraction"),
-    measure     = c("composition",  "energy",        "inclusion"),
-    system      = c("mixed",        "metric",        "mixed"),
-    description = c("Percent (%)",  "kcal per kg",   "Fraction (0-1)")
-  ))
-
-  DBI::dbAppendTable(con, "feeding_phases", data.frame(
-    feeding_phase_id = c("swine_nursery_p1", "swine_nursery_p2", "swine_nursery_p3",
-                         "swine_grower",     "swine_finisher",
-                         "swine_gestation",  "swine_lactation"),
-    species          = rep("swine", 7),
-    production_class = c("nursery",  "nursery",  "nursery",
-                         "grower",   "finisher",
-                         "breeding", "breeding"),
-    phase_name       = c("Nursery Phase 1", "Nursery Phase 2", "Nursery Phase 3",
-                         "Grower",          "Finisher",
-                         "Gestation",       "Lactation"),
-    sort_order       = 1:7,
-    description      = c("5-7 kg BW", "7-11 kg BW", "11-23 kg BW",
-                         "23-50 kg BW", "50-130 kg BW",
-                         "Gestating sow", "Lactating sow"),
-    active           = rep(TRUE, 7)
-  ))
-
-  DBI::dbAppendTable(con, "nutrients", data.frame(
-    nutrient_id     = c("dm",       "cp",            "me_swine",
-                        "ne_swine", "sid_lys",        "sttd_p",
-                        "ca",       "p",              "na_mineral"),
-    display_name    = c("Dry Matter",       "Crude Protein",    "ME (Swine)",
-                        "NE (Swine)",       "SID Lysine",       "STTD Phosphorus",
-                        "Calcium",          "Total Phosphorus",  "Sodium"),
-    nutrient_class  = c("proximate",  "proximate",  "energy",
-                        "energy",     "amino_acid", "mineral",
-                        "mineral",    "mineral",    "mineral"),
-    species         = c(NA,      NA,       "swine",
-                        "swine", "swine",  "swine",
-                        NA,      NA,       NA),
-    basis           = rep("as_fed", 9),
-    default_unit_id = c("pct",     "pct",     "kcal_kg",
-                        "kcal_kg", "pct",     "pct",
-                        "pct",     "pct",     "pct"),
-    description     = c(NA, NA,
-                        "Metabolizable energy for swine",
-                        "Net energy for swine",
-                        "Standardized ileal digestible lysine",
-                        "Standardized total tract digestible phosphorus",
-                        NA, NA, NA)
-  ))
-
-  DBI::dbAppendTable(con, "ingredients", data.frame(
-    ingredient_id     = c("corn_yellow_dent_2",   "soybean_meal_48",
-                          "monocalcium_phosphate", "limestone",  "salt"),
-    ingredient_symbol = c("CYD2",   "SBM48", "MCP",   "LIME",  "SALT"),
-    name              = c("Yellow Dent #2 Corn",  "Soybean Meal 48%",
-                          "Monocalcium Phosphate", "Limestone", "Salt"),
-    ingredient_class  = c("grain",  "protein_meal", "mineral", "mineral", "mineral"),
-    default_species   = rep("swine", 5),
-    description       = rep(NA_character_, 5),
-    active            = rep(TRUE, 5)
-  ))
 
   invisible(con)
 }

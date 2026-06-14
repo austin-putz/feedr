@@ -14,7 +14,6 @@ library(tibble)
 
 feedr <- init_feedr_db(
   path = "~/feedr/swine.db",
-  seed = TRUE,
   migrate = TRUE
 )
 

@@ -40,7 +40,7 @@ collecting, or passing to write functions like \code{\link[=append_rows]{append_
 }
 \examples{
 \dontrun{
-db <- init_feedr_db(seed = TRUE)
+db <- init_feedr_db()
 
 # View a table
 db |> get_table("ingredients")

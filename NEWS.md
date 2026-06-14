@@ -1,16 +1,24 @@
+# feedr 0.0.0.9006
+
+- Removed `seed` argument from `init_feedr_db()` and all related seeding logic.
+  Database initialisation now only creates the schema; use a future `seed_data()`
+  function to populate reference values.
+- Removed `row_origin` and `row_policy` columns from the `nutrients` table schema.
+  These columns existed solely to protect seed rows and defaulted every user-inserted
+  nutrient to `row_policy = 'protected'`, which blocked updates and deletes.
+- Removed internal `.feedr_filter_protected()` helper and all row-protection checks
+  from `append_rows(.replace)`, `update_rows()`, and `drop_rows()`.
+
 # feedr 0.0.0.9005
 
 - New: `drop_rows(.data, .by = NULL, .all = FALSE)` — permanently deletes rows
   (physically removes from the database; cannot be undone). Default filtered
   mode deletes only rows matched by a prior `filter()`; `.all = TRUE` wipes
-  the entire table after printing a prominent WARNING. Respects
-  `row_policy = 'protected'`: protected rows are skipped with a warning in
-  filtered mode and cause a hard stop in `.all` mode.
+  the entire table after printing a prominent WARNING.
 - `append_rows()` gains `.replace = FALSE` argument. When `TRUE`, any existing
   rows whose primary key matches an incoming row are permanently deleted before
   the insert (DELETE + INSERT in one transaction). A WARNING is printed before
-  any deletion. Incoming rows with new PKs are simply inserted. Protected rows
-  (`row_policy = 'protected'`) cause a hard stop.
+  any deletion. Incoming rows with new PKs are simply inserted.
 
 # feedr 0.0.0.9004
 
@@ -32,7 +40,7 @@
 - New: `update_rows(.data, ..., .rows = NULL, .by = NULL)` — updates values in
   existing rows. Scalar mode recycles a single value to all filtered rows; tibble
   mode matches on `.by` key column. Vectors (length > 1) in `...` are rejected
-  immediately with a helpful error. Respects `row_policy = 'protected'` rows.
+  immediately with a helpful error.
 - `feedr_tbl` S3 class: `filter`, `select`, and `collect` methods registered so
   dplyr verbs work natively before collecting.
 - `dplyr` added to `Imports`.
@@ -46,8 +54,6 @@
   foreign keys.
 - Removed `bw_min_kg` and `bw_max_kg` from the base schema; body weight and all
   other operational context will be user-extensible via `mutate_table()`.
-- Seed data IDs now carry a species prefix (e.g. `swine_nursery_p1`) to remain
-  unambiguous as multi-species rows are added.
 
 # feedr 0.0.0.9002
 
@@ -56,8 +62,6 @@
 - Supports file-backed and in-memory (`:memory:`) modes.
 - Creates the initial schema on a new database: `units`, `feeding_phases`,
   `nutrients`, and `ingredients` tables.
-- `seed = TRUE` populates example rows for swine feeding phases, core nutrients,
-  and five common ingredients (no licensed NRC/NASEM values).
 - Existing databases are opened safely with a message showing the path and
   OS-specific delete instructions — the file is never overwritten through the API.
 - Added `print.feedr_session()` method showing path, read-only status, and schema

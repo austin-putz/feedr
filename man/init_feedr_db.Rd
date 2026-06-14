@@ -4,7 +4,7 @@
 \alias{init_feedr_db}
 \title{Initialize a feedr database session}
 \usage{
-init_feedr_db(path = NULL, seed = FALSE, migrate = FALSE, read_only = FALSE)
+init_feedr_db(path = NULL, migrate = FALSE, read_only = FALSE)
 }
 \arguments{
 \item{path}{Full path to the database file, or \code{":memory:"} for an
@@ -13,10 +13,6 @@ from options: \code{getOption("feedr.db_path")} (directory, default
 \code{":memory:"}) joined with \code{getOption("feedr.db_name")} (filename, default
 \code{"feedr.db"}). Any file extension is accepted — common choices are
 \code{feedr.db}, \code{feedr.duckdb}, or a project-specific name like \code{swine.db}.}
-
-\item{seed}{If \code{TRUE} and the database is new (or in-memory), populate it
-with example rows for \code{units}, \code{feeding_phases}, \code{nutrients}, and \code{ingredients}.
-No licensed NRC/NASEM values are included — rows are synthetic examples.}
 
 \item{migrate}{If \code{TRUE}, run pending schema migrations. Currently a no-op;
 no migrations are defined yet.}
@@ -35,8 +31,8 @@ Creates or opens a DuckDB database and returns a \code{feedr_session} object.
 \details{
 Two primary uses:
 \itemize{
-\item \strong{New database} — creates the file, builds the initial schema, and
-optionally seeds example rows.
+\item \strong{New database} — creates the file and builds the initial schema.
+Use a future \code{seed_data()} function to populate it with reference values.
 \item \strong{Existing database} — opens the file as-is, prints the exact path with
 OS-specific instructions to delete it if you want to start over. The file
 is never overwritten through this function.

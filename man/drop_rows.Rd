@@ -30,14 +30,10 @@ by any prior \code{\link[dplyr:filter]{dplyr::filter()}} on the \code{feedr_tbl}
 \item \strong{Wipe} (\code{.all = TRUE}) - deletes every row in the table. A WARNING is
 printed before any data is removed.
 }
-
-If the table has a \code{row_policy} column, rows marked \code{'protected'} are
-skipped in filtered mode (with a warning) or cause a hard stop in \code{.all}
-mode.
 }
 \examples{
 \dontrun{
-db <- init_feedr_db(seed = TRUE)
+db <- init_feedr_db()
 
 # Delete one row matched by a filter
 db |> get_table("ingredients") |>

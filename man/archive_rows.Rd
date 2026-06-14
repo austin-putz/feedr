@@ -29,7 +29,7 @@ The table must have an \code{archived_at} column. Add one with:
 }
 \examples{
 \dontrun{
-db <- init_feedr_db(seed = TRUE)
+db <- init_feedr_db()
 
 # Add the required column first
 db |> get_table("ingredients") |> mutate_table(archived_at = as.POSIXct(NA))

@@ -35,7 +35,7 @@ printed before any data is removed and the operation cannot be undone.
 }
 \examples{
 \dontrun{
-db <- init_feedr_db(seed = TRUE)
+db <- init_feedr_db()
 
 # Inline - one row at a time
 db |> get_table("ingredients") |>

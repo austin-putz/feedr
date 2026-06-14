@@ -30,13 +30,9 @@ row that passed any prior \code{\link[dplyr:filter]{dplyr::filter()}}. Vectors a
 update each row individually.
 }
 }
-\details{
-If the table has a \code{row_policy} column, rows marked \code{'protected'} are
-skipped with a warning.
-}
 \examples{
 \dontrun{
-db <- init_feedr_db(seed = TRUE)
+db <- init_feedr_db()
 
 # Scalar mode - set active = FALSE for all mineral ingredients
 db |> get_table("ingredients") |>

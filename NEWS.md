@@ -1,3 +1,18 @@
+# feedr 0.0.0.9010
+
+- New: `schema(.con)` — prints a formatted overview of all tables and views in the
+  database, including table name, type (TABLE / VIEW), row count, column count, and a
+  one-line description. Returns a `data.frame` invisibly for programmatic access.
+- New: `describe_table(.con, .table_name)` — prints column-level detail for a single
+  table or view: column name, data type, nullability, key role (PK / FK), and a
+  one-line description, plus a header with the table description and row/column counts.
+  Accepts either a `feedr_session` + explicit name, or a `feedr_tbl` (name inferred
+  automatically), so both `db |> describe_table("nutrients")` and
+  `db |> get_table("nutrients") |> describe_table()` work.
+- New: `R/schema.R` — new file housing both introspection functions plus private
+  named vectors `.feedr_table_descriptions` and `.feedr_column_descriptions` covering
+  all 11 tables and every column in the v3 schema.
+
 # feedr 0.0.0.9009
 
 - New: `close_feedr_db(session)` — explicitly closes the DuckDB connection held by a

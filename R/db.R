@@ -15,8 +15,9 @@
 #'   `":memory:"`) joined with `getOption("feedr.db_name")` (filename, default
 #'   `"feedr.db"`). Any file extension is accepted — common choices are
 #'   `feedr.db`, `feedr.duckdb`, or a project-specific name like `swine.db`.
-#' @param migrate If `TRUE`, run pending schema migrations. Currently a no-op;
-#'   no migrations are defined yet.
+#' @param migrate If `TRUE`, run pending schema migrations on an existing
+#'   database (e.g. add tables introduced in a newer schema version). Has no
+#'   effect on new databases or on read-only connections.
 #' @param read_only Open in read-only mode. Cannot be used when the file does
 #'   not yet exist.
 #'
@@ -32,7 +33,7 @@ init_feedr_db <- function(path = NULL,
   in_memory <- identical(path, ":memory:")
 
   if (migrate) {
-    message("feedr: migrate = TRUE has no effect yet - no migrations are defined.")
+    message("feedr: migrate = TRUE — will run pending migrations after opening.")
   }
 
   if (in_memory) {
@@ -59,6 +60,9 @@ init_feedr_db <- function(path = NULL,
   } else {
     con <- DBI::dbConnect(duckdb::duckdb(), dbdir = path, read_only = read_only)
     .feedr_existing_db_message(path)
+    if (migrate && !read_only) {
+      .feedr_run_migrations(con)
+    }
   }
 
   .feedr_new_session(con, path, read_only)
@@ -89,6 +93,44 @@ init_feedr_db <- function(path = NULL,
     "    macOS / Linux : rm \"", path, "\"\n",
     "    Windows       : del \"", path, "\""
   )
+}
+
+
+# Run pending schema migrations -------------------------------------------------
+
+.feedr_run_migrations <- function(con) {
+  # v1 → v2: add nutrient_requirements table if missing
+  if (!DBI::dbExistsTable(con, "nutrient_requirements")) {
+    message("feedr: Migrating schema v1 → v2 (adding nutrient_requirements)")
+    DBI::dbExecute(con, "
+      CREATE TABLE IF NOT EXISTS nutrient_requirements (
+        requirement_id      VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+        feeding_phase_id    VARCHAR NOT NULL
+                              REFERENCES feeding_phases(feeding_phase_id),
+        requirement_set_id  VARCHAR NOT NULL,
+        nutrient_id         VARCHAR NOT NULL
+                              REFERENCES nutrients(nutrient_id),
+        requirement_min     DOUBLE,
+        requirement_max     DOUBLE,
+        requirement_target  DOUBLE,
+        min_strictness      VARCHAR DEFAULT 'hard',
+        max_strictness      VARCHAR DEFAULT 'hard',
+        penalty_min         DOUBLE,
+        penalty_max         DOUBLE,
+        penalty_target      DOUBLE,
+        unit_id             VARCHAR NOT NULL
+                              REFERENCES units(unit_id),
+        basis               VARCHAR NOT NULL,
+        source              VARCHAR NOT NULL,
+        source_id           VARCHAR,
+        notes               VARCHAR,
+        locked              BOOLEAN DEFAULT FALSE,
+        archived_at         TIMESTAMP,
+        created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (feeding_phase_id, requirement_set_id, nutrient_id, source, basis)
+      )
+    ")
+  }
 }
 
 
@@ -173,6 +215,35 @@ init_feedr_db <- function(path = NULL,
     )
   ")
 
+  DBI::dbExecute(con, "
+    CREATE TABLE IF NOT EXISTS nutrient_requirements (
+      requirement_id      VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+      feeding_phase_id    VARCHAR NOT NULL
+                            REFERENCES feeding_phases(feeding_phase_id),
+      requirement_set_id  VARCHAR NOT NULL,
+      nutrient_id         VARCHAR NOT NULL
+                            REFERENCES nutrients(nutrient_id),
+      requirement_min     DOUBLE,
+      requirement_max     DOUBLE,
+      requirement_target  DOUBLE,
+      min_strictness      VARCHAR DEFAULT 'hard',
+      max_strictness      VARCHAR DEFAULT 'hard',
+      penalty_min         DOUBLE,
+      penalty_max         DOUBLE,
+      penalty_target      DOUBLE,
+      unit_id             VARCHAR NOT NULL
+                            REFERENCES units(unit_id),
+      basis               VARCHAR NOT NULL,
+      source              VARCHAR NOT NULL,
+      source_id           VARCHAR,
+      notes               VARCHAR,
+      locked              BOOLEAN DEFAULT FALSE,
+      archived_at         TIMESTAMP,
+      created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (feeding_phase_id, requirement_set_id, nutrient_id, source, basis)
+    )
+  ")
+
   invisible(con)
 }
 
@@ -191,7 +262,7 @@ init_feedr_db <- function(path = NULL,
       con            = con,
       path           = path,
       read_only      = read_only,
-      schema_version = 1L,
+      schema_version = 2L,
       opened_at      = Sys.time(),
       .ref           = ref
     ),

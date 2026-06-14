@@ -1,3 +1,17 @@
+# feedr 0.0.0.9007
+
+- New: `nutrient_requirements` table added to the schema (schema version bumped to 2).
+  Stores per-phase nutrient requirement specifications (min, max, target) for use in
+  LP diet formulation. Rows link to `feeding_phases` via `feeding_phase_id` FK and to
+  `nutrients` via `nutrient_id` FK. Key columns: `requirement_set_id` (groups rows by
+  source, e.g. `"nasem2022"`), `min_strictness` / `max_strictness` (`'hard'` or
+  `'soft'`), penalty columns for soft-bound LP formulation, `basis` (`"as_fed"` or
+  `"dry_matter"`), and `locked`. `requirement_id` is auto-generated as a UUID.
+  A UNIQUE constraint on `(feeding_phase_id, requirement_set_id, nutrient_id, source,
+  basis)` prevents duplicate rows. Insert requirements via `append_rows()`.
+- New: `init_feedr_db(migrate = TRUE)` now runs real migrations. Existing v1
+  databases gain the `nutrient_requirements` table without data loss.
+
 # feedr 0.0.0.9006
 
 - Removed `seed` argument from `init_feedr_db()` and all related seeding logic.

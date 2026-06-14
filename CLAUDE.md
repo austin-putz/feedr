@@ -54,6 +54,7 @@ R/
 ## S3 Classes
 
 ### `feedr_session`
+
 Returned by `init_feedr_db()`. Wraps a DBI connection with an auto-close finalizer.
 
 | Field | Description |
@@ -66,6 +67,7 @@ Returned by `init_feedr_db()`. Wraps a DBI connection with an auto-close finaliz
 | `.ref` | Internal env with finalizer — auto-closes on GC |
 
 ### `feedr_tbl`
+
 Returned by `get_table()`. A lazy table wrapper with dplyr support.
 
 | Field | Description |

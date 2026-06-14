@@ -42,8 +42,8 @@ R/
 |---|---|
 | `init_feedr_db(path, migrate, read_only)` | Create or open a DuckDB database; returns a `feedr_session` |
 | `close_feedr_db(session)` | Explicitly close a DuckDB connection |
-| `schema(.con)` | Print an overview of all tables and views with row/col counts and descriptions |
-| `describe_table(.con, .table_name)` | Print column-level detail (type, nullable, key, description) for one table |
+| `schema(.db_con)` | Print an overview of all tables and views with row/col counts and descriptions |
+| `describe_table(.db_con, .table_name)` | Print column-level detail (type, nullable, key, description) for one table |
 | `get_table(feedr, name)` | Open a table as a lazy, pipe-friendly `feedr_tbl` |
 | `append_rows(.data, ..., .rows, .replace)` | Insert new rows; `.replace = TRUE` does DELETE + INSERT |
 | `archive_rows(.data, .reason, .by)` | Soft-delete rows by setting `archived_at` timestamp |

@@ -77,10 +77,10 @@ High-Level Take
   I would rename it to something less normative, such as usual_upper_bound_concern, or drop it until result sorting needs it. A global “lower is better” flag can confuse users when a nutrient also has a real deficiency
   minimum.
 
-  7. The plan conflicts with existing seeded IDs
+  7. The plan conflicts with legacy IDs used in early development
 
-  Current code seeds sttd_p, p, and na_mineral, while the plan standardizes on p_sttd, p_total, and na. The new names are better, but the implementation plan needs an alias/migration note so old examples and seed data
-  do not drift.
+  Early development used sttd_p, p, and na_mineral, while the plan standardizes on p_sttd, p_total, and na. The new names are better, but the implementation plan needs an alias/migration note so old examples and any
+  existing user data do not drift.
 
   A small nutrient_aliases table would also help spreadsheet imports:
 

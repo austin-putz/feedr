@@ -107,15 +107,18 @@ developer machine:
 
 `library(feedr)` should not create, migrate, or seed a database as a side effect. Package attach should
 only load functions. Database creation is explicit through `init_feedr_db()` so users know exactly
-where persistent files are written and what seed data is installed.
+where persistent files are written.
 
 Recommended behavior:
 
 1. `init_feedr_db()` creates or opens a DuckDB file at a user-specified location
 2. It checks schema version and runs migrations after explicit confirmation or with `migrate = TRUE`
-3. It seeds package-provided open/licensed reference data only when requested or when the DB is empty
-4. It returns a `feedr_session` object containing the DB connection, path, schema version, and options
-5. It registers a finalizer for that session object so the connection closes cleanly
+3. It returns a `feedr_session` object containing the DB connection, path, schema version, and options
+4. It registers a finalizer for that session object so the connection closes cleanly
+
+Reference data (NRC/NASEM values, species nutrient requirements, standard ingredients) is populated
+separately via `seed_data(species = "swine")` after the database is created. This keeps `init_feedr_db()`
+simple and makes the data-loading step explicit and auditable.
 
 This means nutritionists do:
 
@@ -124,9 +127,12 @@ library(feedr)
 
 feedr <- init_feedr_db(
   path = "~/my_feedr_data/feedr.db",
-  seed = TRUE,
   migrate = TRUE
 )
+
+# Populate starting reference values for swine (NRC/NASEM or built-in literature values).
+# Users can alter or extend these rows with their own lab values afterward.
+seed_data(feedr, species = "swine")
 
 feedr |>
   get_table("ingredients")     # lazy DuckDB table for ingredient rows
@@ -236,9 +242,9 @@ provenance.
 
 Key rules:
 
-- Package updates only INSERT reference rows into explicitly versioned seed batches — user rows are never touched
+- Rows inserted by `seed_data()` carry `row_origin = "package_seed"` and `row_policy = "protected"` — they are never touched by package updates
 - `mutate_table()` is the version 1 write primitive for adding rows, archiving rows, or updating mutable rows in any supported table
-- Reference rows and package seed rows are immutable through the feedr API; users can add `project_override` or `user_lab` rows, but cannot modify seeded NRC/NASEM-style rows in place
+- Rows inserted by `seed_data()` are immutable through the feedr API; users can add `project_override` or `user_lab` rows, but cannot modify NRC/NASEM-style reference rows in place
 - Resetting to defaults should be expressed as a generic table mutation that archives matching user/project rows, not as a required v1 helper
 - Raw value tables and audit tables are always queryable for reproducibility
 
@@ -306,7 +312,7 @@ feedr_db()  # prints connection info including file path
 
 `load_db()` can be provided as an alias around `init_feedr_db()` for convenience, but it should return
 a `feedr_session` object instead of silently replacing a hidden global connection. Reference tables are
-seeded into the new DB only when requested or when `seed = TRUE`.
+populated by calling `seed_data(feedr, species = "swine")` after the DB is created.
 
 ---
 
@@ -380,7 +386,7 @@ Rules:
 - Every non-dot argument is interpreted as a column in the selected table; unknown columns fail unless `.mode = "add_columns"`
 - `mutate_table()` must validate table name, required columns, column types, units, and key uniqueness before writing
 - `insert` is the preferred mode for audit-sensitive tables such as `nutrient_values`, `prices`, and lab/import records
-- `update` is allowed only for explicitly mutable rows and metadata fields; it must fail on protected seed/reference rows
+- `update` is allowed only for explicitly mutable rows and metadata fields; it must fail on rows inserted by `seed_data()` that carry `row_policy = "protected"`
 - `archive` sets `archived_at` and audit metadata instead of deleting rows
 - `add_columns` can add user/project fields when allowed by table policy, but must record schema changes in an audit table
 - Domain wrappers such as `update_ingredient()`, `reset_to_defaults()`, or `import_lab_results()` are optional later conveniences, not v1 primitives
@@ -438,7 +444,7 @@ Recommended common row-policy columns for mutable/audited tables:
 
 Policy behavior:
 
-- NRC/NASEM-style package seed rows should be `row_origin = "package_seed"` and `row_policy = "protected"`
+- Rows inserted by `seed_data()` should carry `row_origin = "package_seed"` and `row_policy = "protected"`; NRC/NASEM-style reference rows should always be locked this way
 - Protected rows cannot be updated, archived, or deleted by `mutate_table()` unless an internal migration path sets `.allow_protected = TRUE`
 - User corrections to protected values are represented as new rows with `source_type = "user_lab"` or `source_type = "project_override"`
 - Append-only tables can accept inserts and archives but not destructive updates
@@ -451,16 +457,16 @@ where practical, but it should not claim database-level immutability against dir
 
 ---
 
-## Data Licensing and Seed Data
+## Data Licensing and `seed_data()`
 
-Bundled seed data must be legally redistributable. Do not assume NRC/NASEM tables can be copied into
-the package. Before implementation, classify each data source as:
+Data loaded by `seed_data()` must be legally redistributable. Do not assume NRC/NASEM tables can be
+copied into the package. Before implementation, classify each data source as:
 - **Redistributable:** can ship in `inst/extdata` or package data
 - **User-provided:** user imports their licensed copy or lab sheet locally
 - **Derived equation:** implemented from a cited public equation if redistribution is permitted
 - **Metadata only:** package stores schema/source identifiers but not proprietary values
 
-If key NRC/NASEM values cannot be redistributed, the package should still work with:
+If key NRC/NASEM values cannot be redistributed, `seed_data()` should still work with:
 - A small synthetic/example dataset for tests and vignettes
 - User import helpers for licensed spreadsheets or lab exports
 - Clear messages explaining that users must provide their own licensed reference data
@@ -1455,7 +1461,7 @@ plausible-looking but wrong diet formulations.
 
 - Use informative errors for invalid or unsafe operations; do not silently guess units, basis, species, or prices
 - Use warnings when the formulation can run but the result may be nutritionally or economically misleading
-- Use messages for normal progress only when helpful, especially during DB initialization, migration, seeding, and API price updates
+- Use messages for normal progress only when helpful, especially during DB initialization, migration, `seed_data()` inserts, and API price updates
 - Every solver result should include diagnostics: solver status, binding constraints, missing nutrients, converted units, selected price scenario, and data provenance
 - Errors and warnings should name the ingredient, nutrient, unit, source, and suggested fix whenever possible
 - **Never make a silent assumption about which equation, reference system, or input value to use.** If a required input is missing or ambiguous, stop and tell the user exactly what is needed. Silently defaulting to a reference system, an equation version, or a derived animal parameter is a scientific reproducibility failure.
@@ -1982,7 +1988,7 @@ feedr/
 | 12 | API shape? | **Generalized table-in, table-out verbs.** Users should filter any relevant table with dplyr, then pass the result to a small set of clear verbs. Avoid table-specific accessors and helper functions that only wrap `get_table()` or `filter()`. |
 | 13 | Ingredient shorthand? | **Use ticker-like `ingredient_symbol` values for user-facing code.** Keep `ingredient_id` as the stable internal key, but expose symbols such as `CYD2`, `SBM48`, `DDGS`, `MCP`, and `LIME` in `get_table()` outputs, examples, errors, and result tables. |
 | 14 | Table writes? | **Use `mutate_table()` as the v1 write primitive.** It handles insert, upsert/update where allowed, archive, and schema extension across supported tables. Domain wrappers such as `update_ingredient()` or `import_lab_results()` can come later and must wrap the generic path. |
-| 15 | Immutable rows? | **Yes, through feedr row policies.** Protected package seed/reference rows cannot be modified by normal `mutate_table()` calls; users add override rows instead. This is API-level protection, not a tamper-proof guarantee if someone edits the DuckDB file directly. |
+| 15 | Immutable rows? | **Yes, through feedr row policies.** Rows inserted by `seed_data()` carry `row_policy = "protected"` and cannot be modified by normal `mutate_table()` calls; users add override rows instead. This is API-level protection, not a tamper-proof guarantee if someone edits the DuckDB file directly. |
 | 16 | Column naming? | **Use meaningful, table-specific value names.** Avoid bare `value`, `min`, `max`, and `target` columns in user-facing tables. Prefer `nutrient_value`, `price_value`, `requirement_min`, `constraint_max`, etc., so collected/joined tables remain readable. |
 | 17 | Unit/basis design? | **Keep measurement units and basis separate.** `unit_id` is scale only (`pct`, `kcal_kg`, `usd_short_ton`); `basis` is a normal filterable column (`as_fed`, `dry_matter`, `energy_density`, `contract`). Do not encode basis in unit names. |
 | 18 | Hosting and CI? | **GitHub + GitHub Actions, tested on macOS, Linux, and Windows.** Cross-platform package checks are required so feedr does not accidentally depend on Apple-only paths, shell behavior, or system tooling. |
@@ -2034,19 +2040,20 @@ feedr/
 ## Immediate Next Steps (if we proceed)
 
 1. Lock the normalized DuckDB schema: ingredients, nutrients, units, nutrient values, prices, price scenarios, ingredient limits, generic constraints
-2. Implement `init_feedr_db()` returning `feedr_session`, with explicit path, seed, migrate, and message behavior
-3. Implement `animal_profile()`, `calculate_requirements()`, `diet_spec()`, `price_scenario()`, and `constraint_set()` builders before solver work
-4. Seed a legal minimal example database (corn, SBM 48%, choice white grease, monocalcium phosphate, limestone, NaCl — enough to run a real nursery diet)
-5. Implement deterministic `formulate_diet()` with ROI + HiGHS backend and strict unit normalization
-6. Implement constraint compilation: ingredient bounds, fixed inclusions, group limits, nutrient constraints, nutrient ratios, and custom linear constraints
-7. Add structured warnings/errors for missing nutrients, missing prices, infeasible constraints, bad ratio constraints, and unit/basis conflicts
-8. Add `explain_solution()` and a basic `explain_infeasibility()` based on pre-solve validation plus solver status
-9. Test against a known MIXIT/BestMix/manual LP result to validate LP math
-10. Add NASEM/NRC requirement equation rows only after licensing/implementation details are clear
-11. Add price import helpers after manual/named price scenarios work
-12. Defer stochastic formulation until deterministic swine formulation is validated
-13. Write vignette showing the full explicit-session workflow
-14. Add GitHub Actions workflows for R package checks on macOS, Linux, and Windows
+2. Implement `init_feedr_db()` returning `feedr_session`, with explicit path, migrate, and message behavior
+3. Implement `seed_data(feedr, species = "swine")` to load starting reference values (ingredients, nutrients, requirements) from legally redistributable literature values or built-in package data
+4. Implement `animal_profile()`, `calculate_requirements()`, `diet_spec()`, `price_scenario()`, and `constraint_set()` builders before solver work
+5. Populate a legal minimal example database via `seed_data()` (corn, SBM 48%, choice white grease, monocalcium phosphate, limestone, NaCl — enough to run a real nursery diet)
+6. Implement deterministic `formulate_diet()` with ROI + HiGHS backend and strict unit normalization
+7. Implement constraint compilation: ingredient bounds, fixed inclusions, group limits, nutrient constraints, nutrient ratios, and custom linear constraints
+8. Add structured warnings/errors for missing nutrients, missing prices, infeasible constraints, bad ratio constraints, and unit/basis conflicts
+9. Add `explain_solution()` and a basic `explain_infeasibility()` based on pre-solve validation plus solver status
+10. Test against a known MIXIT/BestMix/manual LP result to validate LP math
+11. Add NASEM/NRC requirement equation rows only after licensing/implementation details are clear
+12. Add price import helpers after manual/named price scenarios work
+13. Defer stochastic formulation until deterministic swine formulation is validated
+14. Write vignette showing the full explicit-session workflow
+15. Add GitHub Actions workflows for R package checks on macOS, Linux, and Windows
 
 ---
 

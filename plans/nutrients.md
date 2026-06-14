@@ -93,9 +93,7 @@ CREATE TABLE nutrients (
                                            --   (e.g., Fluoride, some toxicity maxima)
   description       VARCHAR,               -- species gotchas, digestibility basis notes, etc.
   active            BOOLEAN DEFAULT TRUE,  -- hide retired/legacy IDs without deleting
-  row_origin        VARCHAR DEFAULT 'package_seed',
-  row_policy        VARCHAR DEFAULT 'protected',
-  locked            BOOLEAN DEFAULT TRUE,
+  locked            BOOLEAN DEFAULT FALSE,  -- set TRUE by seed_data() for reference rows
   created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
@@ -763,7 +761,7 @@ These unit rows must exist before any `nutrients` rows can be inserted (FK const
 | `mg_kg` | trace | mg per kg diet (ppm) |
 | `g_kg` | composition | g per kg diet |
 
-Units registry should be fully populated before any nutrient or ingredient data is seeded.
+Units registry should be fully populated before `seed_data()` is called.
 The LP builder treats unit conversion as a required step, not an optional one.
 
 ---
@@ -795,17 +793,17 @@ The LP builder treats unit conversion as a required step, not an optional one.
    macrominerals, trace minerals, fat-soluble vitamins, water-soluble vitamins, fatty acids,
    pigments. This makes the migration script readable and easy to audit.
 
-3. **Validate FKs before seeding `nutrient_requirements`** — run a query to confirm every
-   `nutrient_id` referenced in the requirements seed data has a corresponding row in
-   `nutrients`. Fail the migration if any are missing.
+3. **Validate FKs before `seed_data()` inserts `nutrient_requirements`** — run a query to confirm
+   every `nutrient_id` referenced in the requirements data has a corresponding row in
+   `nutrients`. Fail the insertion if any are missing.
 
 4. **Do not add `nutrients` rows speculatively** — only add rows that have corresponding
    `nutrient_values` or `nutrient_requirements` entries. Unused rows create confusion in
    `get_table("nutrients")` output.
 
-5. **Lock all package seed rows** — set `locked = TRUE` and `row_policy = "protected"` for
-   all package-seeded rows. Users add custom nutrient IDs (e.g., custom energy metrics,
-   proprietary digestibility fractions) as new rows with `row_origin = "user"`.
+5. **Lock reference rows inserted by `seed_data()`** — `seed_data()` sets `locked = TRUE` for
+   all rows it inserts. Users add custom nutrient IDs (e.g., custom energy metrics,
+   proprietary digestibility fractions) as new rows with `locked = FALSE`.
 
 ---
 
@@ -873,16 +871,16 @@ CREATE TABLE nutrient_aliases (
 > different nutrients (unlikely but possible), qualify the alias in the `source` column
 > and document the ambiguity.
 
-### Seed aliases for known naming variants
+### Aliases for known naming variants
 
-This table also handles the migration from existing seeded IDs in the R package
+This table also handles the migration from legacy IDs that appeared in earlier development
 (`sttd_p`, `p`, `na_mineral`) to the new canonical IDs (`p_sttd`, `p_total`, `na`):
 
 | alias | nutrient_id | source | notes |
 |---|---|---|---|
-| `sttd_p` | `p_sttd` | `package_legacy` | Old seeded ID before rename |
-| `p` | `p_total` | `package_legacy` | Old seeded ID; ambiguous, now `p_total` |
-| `na_mineral` | `na` | `package_legacy` | Old seeded ID with redundant suffix |
+| `sttd_p` | `p_sttd` | `package_legacy` | Legacy ID before rename |
+| `p` | `p_total` | `package_legacy` | Legacy ID; ambiguous, now `p_total` |
+| `na_mineral` | `na` | `package_legacy` | Legacy ID with redundant suffix |
 | `STTD P` | `p_sttd` | `spreadsheet_import` | Column header style |
 | `STTD-P` | `p_sttd` | `spreadsheet_import` | |
 | `dLys` | `dig_lys` | `spreadsheet_import` | |
@@ -915,20 +913,21 @@ not have to know alias resolution is happening silently.
 
 ## 13. Implementation Order (revised)
 
-1. **Create `units` table** — FK target for everything else. Seed all rows from Section 8.
+1. **Create `units` table** — FK target for everything else. Populate all rows from Section 8 via `seed_data()`.
 2. **Create `nutrient_unit_conversions` table** — needed before any IU vitamin data is
    imported.
-3. **Insert `nutrients` rows** in class order: energy, proximate, amino acids,
+3. **Insert `nutrients` rows** in class order via `seed_data()`: energy, proximate, amino acids,
    rumen protein, macrominerals, trace minerals, fat-soluble vitamins, water-soluble
    vitamins, fatty acids, pigments.
-4. **Create `nutrient_aliases` table** and seed legacy + spreadsheet aliases.
-5. **Validate FKs** before seeding `nutrient_requirements` — confirm every `nutrient_id`
-   used in requirements has a row in `nutrients`. Fail the migration if any are missing.
-6. **Migrate old seeded IDs** — any existing rows using `sttd_p`, `p`, `na_mineral` must
-   be updated or aliased via `nutrient_aliases` before new seed data is inserted.
+4. **Create `nutrient_aliases` table** and populate legacy + spreadsheet aliases via `seed_data()`.
+5. **Validate FKs** before `seed_data()` inserts `nutrient_requirements` — confirm every
+   `nutrient_id` used in requirements has a row in `nutrients`. Fail the insertion if any are missing.
+6. **Migrate legacy IDs** — any existing rows using `sttd_p`, `p`, `na_mineral` must
+   be updated or aliased via `nutrient_aliases` before new reference data is inserted.
 7. **Do not add `nutrients` rows speculatively** — only add what has corresponding
    `nutrient_values` or `nutrient_requirements` entries.
-8. **Lock all package seed rows** — `locked = TRUE`, `row_policy = "protected"`.
+8. **Lock all reference rows** — `seed_data()` sets `locked = TRUE` on every row it inserts.
+   Users add custom rows with `locked = FALSE`.
 
 ---
 

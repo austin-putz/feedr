@@ -30,8 +30,8 @@ specific `nutrient_id` rows needed for multi-species coverage.
 All requirement values shown here are **approximate and illustrative only**. They are drawn from
 publicly available nutritional guidance (NRC, NASEM, AAFCO, NRC companion animals, NRC fish and
 shrimp) but are **not authoritative and should not be used for actual diet formulation**. The
-package itself should ship only legally redistributable seed values or require the user to import
-licensed data.
+package itself should provide only legally redistributable values via `seed_data()`, or require
+the user to import licensed data themselves.
 
 ---
 
@@ -80,9 +80,7 @@ CREATE TABLE nutrient_requirements (
   source              VARCHAR NOT NULL,                            -- "NRC2012", "NASEM2022", "AAFCO2023"
   source_id           VARCHAR,                                     -- specific table/section citation
   notes               VARCHAR,                                     -- e.g. "Ca:P must be 1.2–1.5:1"
-  row_origin          VARCHAR DEFAULT 'package_seed',
-  row_policy          VARCHAR DEFAULT 'protected',
-  locked              BOOLEAN DEFAULT TRUE,
+  locked              BOOLEAN DEFAULT FALSE,  -- set TRUE by seed_data() for reference rows
   archived_at         TIMESTAMP,
   created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
@@ -190,7 +188,7 @@ asymmetrically via separate `penalty_min` + `penalty_max` rows) for deviation. U
 - `basis` must always be explicit — never roll it into the unit name
 - Ratio constraints (Ca:P, Met:Lys) belong in `constraint_terms`, not here — this table stores
   single-nutrient min/max rows only
-- Package seed rows: `locked = TRUE`, `min_strictness = 'hard'`, `max_strictness = 'hard'`
+- Rows inserted by `seed_data()`: `locked = TRUE`, `min_strictness = 'hard'`, `max_strictness = 'hard'`
   by default; users can override strictness in their own rows
 - The UNIQUE constraint prevents duplicate rows for the same phase × set × nutrient × source × basis
 - A `NULL` penalty on a soft bound is a schema error — the LP builder must reject it with a
@@ -1068,10 +1066,10 @@ P forms (STTD-P for swine, NPP for poultry, digestible P for fish)
 
 1. **Lock nutrient taxonomy first** — the `nutrient_id` values in the `nutrients` table are FK
    targets for `nutrient_requirements`, `nutrient_values`, and the LP matrix. They must be stable
-   before any seed data is inserted.
+   before `seed_data()` is called.
 2. **Start with swine** — most complete NASEM 2022 equation support, which is the MVP target
-   species. Use the swine rows to validate the table structure.
-3. **Add remaining species as seed data** — the table structure is identical; only values differ.
+   species. Use the swine rows to validate the table structure: `seed_data(feedr, species = "swine")`.
+3. **Add remaining species via `seed_data()`** — the table structure is identical; only values differ.
    Poultry next (broiler/layer), then ruminants, then companion animals, then aquaculture.
 4. **Model ratio constraints separately** — Ca:P ratio (companion animals, swine), Met:Lys ratio
    (all species), Ca:STTD-P (swine), DCAD (dairy cattle) belong in `constraint_terms`, not here.
@@ -1086,8 +1084,9 @@ P forms (STTD-P for swine, NPP for poultry, digestible P for fish)
 ## 10. Open Questions
 
 1. **Licensing**: Can any NRC/NASEM tabular requirement values be redistributed in the package?
-   If not, these example rows become user-import templates rather than seed data.
-2. **Phase granularity**: How many phases per species should the seed data distinguish? Broilers
+   If not, `seed_data()` would ship only synthetic/illustrative examples and users import their
+   licensed copy separately.
+2. **Phase granularity**: How many phases per species should `seed_data()` distinguish? Broilers
    alone have 3–4 phases; turkeys up to 6+; swine 4–6. More phases = more complete but also more
    maintenance.
 3. **Companion animal wet vs. dry basis**: AAFCO and NRC express companion animal requirements

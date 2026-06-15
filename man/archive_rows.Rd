@@ -4,7 +4,7 @@
 \alias{archive_rows}
 \title{Archive (soft-delete) rows by setting an archived_at timestamp}
 \usage{
-archive_rows(.data, .reason = NULL, .by = NULL)
+archive_rows(.data, .reason = NULL, .by = NULL, .allow_computed = FALSE)
 }
 \arguments{
 \item{.data}{A \code{feedr_tbl} from \code{\link[=get_table]{get_table()}}, optionally pre-filtered.}

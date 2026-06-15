@@ -4,13 +4,13 @@
 \alias{describe_table}
 \title{Print column-level details for a single feedr table or view}
 \usage{
-describe_table(.con, .table_name = NULL)
+describe_table(.db_con, .table_name = NULL)
 }
 \arguments{
-\item{.con}{A \code{feedr_session} or \code{feedr_tbl}.}
+\item{.db_con}{A \code{feedr_session} or \code{feedr_tbl}.}
 
 \item{.table_name}{Table or view name as a single string.  Required when
-\code{.con} is a \code{feedr_session}; ignored (with a message) when \code{.con} is a
+\code{.db_con} is a \code{feedr_session}; ignored (with a message) when \code{.db_con} is a
 \code{feedr_tbl} and \code{.table_name} matches the tbl's own table.}
 }
 \value{
@@ -23,7 +23,7 @@ and a one-line description.  Also prints the table description, row count,
 and total column count as a header.
 }
 \details{
-\code{.con} accepts either a \code{feedr_session} (pass \code{.table_name} explicitly) or
+\code{.db_con} accepts either a \code{feedr_session} (pass \code{.table_name} explicitly) or
 a \code{feedr_tbl} (\code{.table_name} is inferred automatically), so both of these
 workflows work:
 

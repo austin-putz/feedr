@@ -4,10 +4,10 @@
 \alias{schema}
 \title{Print an overview of all tables and views in a feedr database}
 \usage{
-schema(.con)
+schema(.db_con)
 }
 \arguments{
-\item{.con}{A \code{feedr_session} created by \code{\link[=init_feedr_db]{init_feedr_db()}}.}
+\item{.db_con}{A \code{feedr_session} created by \code{\link[=init_feedr_db]{init_feedr_db()}}.}
 }
 \value{
 A \code{data.frame} with columns \code{table_name}, \code{type}, \code{rows}, \code{cols},

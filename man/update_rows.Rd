@@ -4,7 +4,7 @@
 \alias{update_rows}
 \title{Update column values in existing rows}
 \usage{
-update_rows(.data, ..., .rows = NULL, .by = NULL)
+update_rows(.data, ..., .rows = NULL, .by = NULL, .allow_computed = FALSE)
 }
 \arguments{
 \item{.data}{A \code{feedr_tbl} from \code{\link[=get_table]{get_table()}}, optionally pre-filtered.}

@@ -4,7 +4,7 @@
 \alias{drop_rows}
 \title{Permanently delete rows from a feedr table}
 \usage{
-drop_rows(.data, .by = NULL, .all = FALSE)
+drop_rows(.data, .by = NULL, .all = FALSE, .allow_computed = FALSE)
 }
 \arguments{
 \item{.data}{A \code{feedr_tbl} from \code{\link[=get_table]{get_table()}}, optionally pre-filtered.}

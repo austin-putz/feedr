@@ -1,3 +1,19 @@
+# feedr 0.0.0.9014
+
+- Fixed: `man/diet_spec.Rd` — roxygen2-generated man page was missing from the repo;
+  now committed alongside the source.
+- Fixed: `man/schema.Rd`, `man/describe_table.Rd` — updated to reflect the `.con` →
+  `.db_con` rename that landed in v0.0.0.9011.
+- Fixed: `man/archive_rows.Rd`, `man/update_rows.Rd`, `man/drop_rows.Rd` — updated to
+  document the `.allow_computed = FALSE` parameter added in v0.0.0.9012.
+- Updated: `.Rbuildignore` — excludes `.claude/` from the package tarball.
+- Updated: `plans/fetch_prices.md` — substantially revised fetch-prices design:
+  clarified v5 migration scope, split schema into `ingredient_prices` (raw observations),
+  `ingredient_prices_resolved` (view), and `price_scenarios` / `price_scenario_items`
+  (named scenario tables); added `contract_month`, `raw_value`, `raw_unit_id`, and
+  `retrieved_at` columns; aligned `row_origin` / `row_policy` conventions with the
+  rest of the schema.
+
 # feedr 0.0.0.9013
 
 - New: `inst/extdata/ingredient_prices.csv` — reference price table for 65 common swine

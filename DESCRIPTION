@@ -1,6 +1,6 @@
 Package: feedr
 Title: Livestock Diet Formulation and Optimization
-Version: 0.0.0.9013
+Version: 0.0.0.9014
 Authors@R:
     c(person("Austin", "Putz", email = "putz.austin@gmail.com", role = c("aut", "cre")))
 Description: Open-source least-cost diet formulation for livestock nutritionists

@@ -1,3 +1,22 @@
+# feedr 0.0.0.9013
+
+- New: `inst/extdata/ingredient_prices.csv` — reference price table for 65 common swine
+  diet ingredients (energy, protein, fat, amino acids, minerals, vitamins, enzymes).
+  65 rows × 12 columns. Two price source types:
+  - `"literature"` (10 rows with DOI): prices extracted from peer-reviewed papers via
+    scite.ai. Sources: Corassa et al. (2024) `10.1590/1809-6891v25e-77350e` — nine
+    ingredients priced in BRL from northern Mato Grosso, Brazil and converted at ~5 BRL/USD
+    (CORN, SBM44, DDGS, DCP, LIME, SALT, LLYS, DLMET, VMIX); Von Eschen et al. (2019)
+    `10.4236/ojas.2019.92016` — fish meal at $1,500/ton from IndexMundi (2018).
+  - `"estimated"` (55 rows): typical US market ranges (2022–2024). Volatile commodities
+    (CORN, SBM*, DDGS) are flagged as placeholders pending `fetch_prices()`.
+- New: `data-raw/ingredient_prices.R` — provenance script that reads the CSV and writes
+  `data/ingredient_prices.rda`. Includes full citation block for both literature sources
+  and notes on price volatility by ingredient class.
+- Updated: `CLAUDE.md` — new "Price Reference Data" section documenting the CSV columns,
+  literature sources, and caveats. File structure block updated to show `data-raw/` and
+  `inst/extdata/`.
+
 # feedr 0.0.0.9012
 
 - New: `diet_spec(.data, basis, source, species, production_class, spec_name, session, .save)`

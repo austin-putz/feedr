@@ -8,7 +8,7 @@
 
 ## What feedr Is
 
-feedr is an open-source R package for livestock diet formulation and optimization. It provides a pipe-first API backed by a local DuckDB database — no server required. The package is in early development (v0.0.0.9012) with a solid data layer and diet specification layer in place; the LP optimization engine is the next major milestone.
+feedr is an open-source R package for livestock diet formulation and optimization. It provides a pipe-first API backed by a local DuckDB database — no server required. The package is in early development (v0.0.0.9013) with a solid data layer and diet specification layer in place; the LP optimization engine is the next major milestone.
 
 ---
 
@@ -36,6 +36,12 @@ R/
 ├── schema.R        — schema(), describe_table(), table/column descriptions
 ├── feedr-package.R — package metadata
 └── zzz.R           — .onAttach startup message and package options
+
+data-raw/
+└── ingredient_prices.R   — script that reads ingredient_prices.csv and saves data/ingredient_prices.rda
+
+inst/extdata/
+└── ingredient_prices.csv — reference price table for 65 common swine diet ingredients
 ```
 
 ---
@@ -139,6 +145,44 @@ Returned by `get_table()`. A lazy table wrapper with dplyr support.
 | v3 → v4 | Adds `diet_specs` and `diet_spec_nutrients` tables |
 
 Migration is triggered by `init_feedr_db(migrate = TRUE)`.
+
+---
+
+## Price Reference Data
+
+`inst/extdata/ingredient_prices.csv` contains reference prices for 65 common swine diet ingredients. It is the canonical source; `data-raw/ingredient_prices.R` reads it and writes `data/ingredient_prices.rda`. Run the script from the package root to regenerate the `.rda`.
+
+### CSV columns
+
+| Column | Description |
+|---|---|
+| `ingredient_symbol` | Short identifier matching feedr conventions (e.g., `SBM48`, `LLYS`) |
+| `ingredient_name` | Full descriptive name |
+| `ingredient_class` | One of: `energy`, `protein`, `fat`, `amino_acid`, `mineral`, `vitamin`, `enzyme`, `other` |
+| `form_description` | Commercial form and purity (e.g., `"98.5% L-Lysine basis"`, `"50% dl-tocopherol acetate"`) |
+| `price_usd_per_ton` | Price in USD per metric ton for the stated commercial form |
+| `price_year` | Year(s) the price data was collected or estimated |
+| `price_region` | Geographic region: `USA`, `Brazil`, or `Global` |
+| `price_source` | `"literature"` (peer-reviewed paper with DOI) or `"estimated"` (industry typical) |
+| `first_author` | First author surname — for `literature` rows only |
+| `pub_year` | Year of publication — for `literature` rows only |
+| `doi` | DOI of the source paper — for `literature` rows only |
+| `notes` | Volatility notes, typical ranges, inclusion rate caveats |
+
+### Literature sources (10 rows)
+
+| Author | Year | DOI | Ingredients covered |
+|---|---|---|---|
+| Corassa | 2024 | `10.1590/1809-6891v25e-77350e` | CORN, SBM44, DDGS, DCP, LIME, SALT, LLYS, DLMET, VMIX — Brazilian (Mato Grosso) prices in BRL, converted at ~5 BRL/USD |
+| Von Eschen | 2019 | `10.4236/ojas.2019.92016` | FISH65 — fish meal ~$1,500/ton (IndexMundi 2018) |
+
+### Caveats
+
+- Energy and protein commodities (`CORN`, `SBM*`, `DDGS`, `SBNO`) are volatile. These rows are placeholders; the future `fetch_prices()` function will replace them with live USDA/CME data.
+- Amino acid prices shift on 3–6 month cycles and are sensitive to Chinese export policy.
+- Vitamin prices are sensitive to supply chain disruptions (factory fires, shipping events).
+- Vitamin rows are priced per ton of the **commercial diluted form** stated in `form_description`, not per ton of pure nutrient.
+- Brazil literature rows (`price_region = "Brazil"`) provide peer-reviewed reference points; `price_region = "USA"` estimated rows are the primary defaults for formulation.
 
 ---
 

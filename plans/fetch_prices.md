@@ -63,6 +63,13 @@ this is the historical ledger. Resolution happens in the view and scenario layer
 | `"append_only"` | API-fetched rows — historical record, not overwritten |
 | `"mutable"` | User-entered rows — can be updated or archived |
 
+**Duplicate prevention:** `fetch_prices()` checks for an existing row matching
+`(ingredient_id, price_date, price_source, location)` before inserting. Duplicates are skipped
+by default with a warning. Pass `.force = TRUE` to insert anyway.
+
+UNIQUE constraint on `(ingredient_id, price_date, price_source, location)` enforced at the
+database level as a backstop.
+
 ### 1.2 `price_scenarios` — named price selections
 
 Named, reproducible price sets for formulation. A scenario locks in specific prices so a diet
@@ -96,12 +103,19 @@ was created so the scenario is fully self-contained.
 | `unit_id` | FK → `units` | |
 | `basis` | VARCHAR | |
 | `resolved_at` | TIMESTAMPTZ | When this snapshot was taken |
-| `row_origin` | VARCHAR | `"computed"`, `"user"` |
+| `row_origin` | VARCHAR | `"calculated"`, `"user"` |
 | `row_policy` | VARCHAR | `"append_only"` |
 | `archived_at` | TIMESTAMPTZ NULL | |
 | `created_at` | TIMESTAMPTZ | |
 
 UNIQUE constraint on `(price_scenario_id, ingredient_id)`.
+
+**Why `row_policy = "append_only"` for items while `price_scenarios.row_policy = "mutable"`:**
+Scenario items are intentionally immutable once created. The scenario header (`price_scenarios`)
+can have its `scenario_name` or `description` updated, but the prices it locked in are frozen —
+this is what makes a scenario reproducible. To update prices in a scenario, archive it and create
+a new one. Think of it like a tagged git commit: you can annotate the tag but not rewrite
+the history it points to.
 
 ### 1.4 `ingredient_prices_resolved` — view
 
@@ -120,10 +134,15 @@ Consistent with `ingredient_nutrient_values_resolved`.
 
 | unit_id | measure | description |
 |---|---|---|
-| `usd_per_ton` | price | US dollars per short ton |
+| `usd_per_short_ton` | price | US dollars per US short ton (2,000 lb) — the storage standard |
+| `usd_per_metric_ton` | price | US dollars per metric ton (1,000 kg) — World Bank raw values before conversion |
 | `usd_per_lb` | price | US dollars per pound |
 | `usd_per_kg` | price | US dollars per kilogram |
-| `usd_per_bu` | price | US dollars per bushel (converted to usd_per_ton at ingest) |
+| `usd_per_bu` | price | US dollars per bushel — preserved in `raw_unit_id`; converted to `usd_per_short_ton` at ingest |
+| `usd_per_cwt` | price | US dollars per hundredweight (100 lb) — NASS unit for sorghum; converted to `usd_per_short_ton` at ingest |
+
+All `price_value` in `ingredient_prices` is stored as `usd_per_short_ton`. Other units appear
+only in `raw_unit_id` (provenance) or in user-entered rows before normalization.
 
 ---
 
@@ -138,6 +157,7 @@ fetch_prices <- function(
   location   = NULL,
   basis      = "as_fed",
   .save      = TRUE,
+  .force     = FALSE,
   verbose    = TRUE
 )
 ```
@@ -146,14 +166,15 @@ fetch_prices <- function(
 
 | argument | type | default | description |
 |---|---|---|---|
-| `.data` | feedr_tbl or data frame | required | Filtered ingredient table from `get_table("ingredients")`. Must have `ingredient_id` and `ingredient_symbol` columns. Filter this table first to control which ingredients are priced — see Usage below. |
-| `source` | character | `"usda_nass"` | Which price source to query. First value is the default; multiple values are tried in order if the primary source returns no data for a given ingredient. |
+| `.data` | feedr_tbl | required | Filtered ingredient table from `get_table("ingredients")`. Must be a `feedr_tbl` (not a plain tibble) so the function has access to the database session when `.save = TRUE`. Filter this table first to control which ingredients are priced — see Usage below. |
+| `source` | character | `"usda_nass"` | Which price source(s) to query. All listed sources are queried and all results are stored — this is not a fallback chain. Pass a single value to fetch from one source only. Default queries USDA NASS only (most stable for US swine diets). |
 | `start_date` | Date or `NULL` | `NULL` | Earliest date to fetch. `NULL` fetches only the most recent available observation per ingredient. Provide a `Date` to retrieve a historical range from `start_date` to `end_date`. |
 | `end_date` | Date | `Sys.Date()` | Latest date to fetch. Defaults to today. Ignored when `start_date = NULL` (most-recent mode). |
-| `location` | character or `NULL` | `NULL` | Market location filter. `NULL` = national average where available. |
+| `location` | character or `NULL` | `NULL` | Market location filter for USDA NASS only (`NULL` = national average). Ignored for `cme_futures` and `world_bank` — a warning is printed if `location` is non-`NULL` and those sources are active. |
 | `basis` | character | `"as_fed"` | v1 supports `"as_fed"` only. DM-basis prices are not commercially quoted and require validated ingredient DM values. |
-| `.save` | logical | `TRUE` | If `TRUE`, appends valid price observations to `ingredient_prices`. If `FALSE`, returns only the result tibble. |
-| `verbose` | logical | `TRUE` | Print a per-ingredient summary of what was fetched, what was skipped, and what could not be priced. |
+| `.save` | logical | `TRUE` | If `TRUE`, appends valid price observations to `ingredient_prices`. If `FALSE`, returns only the result tibble without touching the database. |
+| `.force` | logical | `FALSE` | If `FALSE` (default), skips rows that would duplicate an existing `(ingredient_id, price_date, price_source, location)` combination and prints a warning. If `TRUE`, inserts anyway. Use `.force = TRUE` only to correct a known bad row — not for routine daily pulls. |
+| `verbose` | logical | `TRUE` | Print a per-ingredient, per-source summary of what was fetched, what was skipped, and what could not be priced. |
 
 **`start_date` / `end_date` behavior:**
 
@@ -205,7 +226,9 @@ persisted as price facts.
 sorghum, oats, barley. US-only.
 
 - **URL:** `https://quickstats.nass.usda.gov/api`
-- **API key:** Free registration at quickstats.nass.usda.gov (store as env var `NASS_API_KEY`)
+- **API key:** Free registration at quickstats.nass.usda.gov (store as env var `NASS_API_KEY`).
+  `fetch_prices()` checks for this key at function entry — before querying any ingredient — and
+  errors immediately with instructions if it is missing. Does not silently fail mid-loop.
 - **R package:** `rnassqs` (CRAN)
 - **Key parameters:** `commodity_desc`, `statisticcat_desc = "PRICE RECEIVED"`, `unit_desc`, `year`, `state_name`
 - **Latency:** Monthly updates, 30–60 day lag for current season
@@ -217,7 +240,7 @@ sorghum, oats, barley. US-only.
 | `"CORN, GRAIN"` | `CORN`, `CORN_YEL`, `GRND_CRN` |
 | `"SOYBEANS"` | `SBN`, `SOY` |
 | `"WHEAT"` | `HRW`, `HRS`, `SRW`, `SWW` — mapped by class where possible |
-| `"SORGHUM, GRAIN"` | `MILO`, `SORG` |
+| `"SORGHUM"` | `MILO`, `SORG` |
 | `"OATS"` | `OATS` |
 | `"BARLEY"` | `BARLY` |
 
@@ -323,30 +346,43 @@ as a future extension when project-specific ingredient aliases are needed.
 | `SBM48` | — | `ZM=F` | `SOYBEAN_MEAL` | — | Price in USD/ton already |
 | `HRW` | `WHEAT` | `KE=F` | `WHEAT_US_HRW` | 60 | Hard Red Winter |
 | `SRW` | `WHEAT` | `ZW=F` | — | 60 | Soft Red Winter |
-| `MILO` | `SORGHUM, GRAIN` | — | — | 56 | NASS only; no futures |
+| `MILO` | `SORGHUM` | — | — | — | NASS only; unit is $/cwt (× 20 → $/short ton); no futures |
 | `OATS` | `OATS` | `ZO=F` | — | 32 | |
 | `BARLY` | `BARLEY` | — | — | 48 | NASS only; no futures |
 | `FMEAL` | — | — | `FISHMEAL` | — | World Bank only |
 
 Ingredients absent from this map return `status = "unmapped"` with an informative message.
 
+**SBM44 and other near-miss ingredients:** `SBM44` (44% CP soybean meal) has no independent
+market quote — only `SBM48` maps to `ZM=F` (CBOT soybean meal). When a user's ingredient list
+includes `SBM44`, `fetch_prices()` returns `status = "unmapped"` with a message:
+
+```text
+  - SBM44   unmapped (no public price source; closest mapped proxy: SBM48)
+            Use append_rows() to enter a price manually, or copy from SBM48.
+```
+
+The package does not automatically copy or alias SBM48 prices to SBM44 — that substitution
+affects downstream formulation math and must be an explicit user decision.
+
 ---
 
 ## 6. Unit Conversion on Fetch
 
-All prices are stored as `usd_per_ton` (US short ton). Original source values are preserved in
-`raw_value` and `raw_unit_id` for auditability.
+All prices are stored as `usd_per_short_ton` (US short ton = 2,000 lb). Original source values
+are preserved in `raw_value` and `raw_unit_id` for auditability.
 
-| source unit | conversion to usd_per_ton |
-|---|---|
-| USD/bushel (corn 56 lb) | × (2000 / 56) = × 35.714 |
-| USD/bushel (soybeans 60 lb) | × (2000 / 60) = × 33.333 |
-| USD/bushel (wheat 60 lb) | × (2000 / 60) = × 33.333 |
-| USD/bushel (oats 32 lb) | × (2000 / 32) = × 62.500 |
-| USD/bushel (sorghum 56 lb) | × (2000 / 56) = × 35.714 |
-| USD/bushel (barley 48 lb) | × (2000 / 48) = × 41.667 |
-| USD/metric ton | × (1000 / 907.185) = × 1.1023 |
-| USD/pound | × 2000 |
+| source unit | `raw_unit_id` | conversion to `usd_per_short_ton` |
+|---|---|---|
+| USD/bushel (corn 56 lb) | `usd_per_bu` | × (2000 / 56) = × 35.714 |
+| USD/bushel (soybeans 60 lb) | `usd_per_bu` | × (2000 / 60) = × 33.333 |
+| USD/bushel (wheat 60 lb) | `usd_per_bu` | × (2000 / 60) = × 33.333 |
+| USD/bushel (oats 32 lb) | `usd_per_bu` | × (2000 / 32) = × 62.500 |
+| USD/bushel (sorghum 56 lb) | `usd_per_bu` | × (2000 / 56) = × 35.714 |
+| USD/bushel (barley 48 lb) | `usd_per_bu` | × (2000 / 48) = × 41.667 |
+| USD/hundredweight | `usd_per_cwt` | × 20 — sorghum (`MILO`, `SORG`) from USDA NASS |
+| USD/metric ton | `usd_per_metric_ton` | × (1000 / 907.185) = × 1.1023 |
+| USD/pound | `usd_per_lb` | × 2000 |
 
 ---
 
@@ -406,8 +442,13 @@ inst/seed_data/prices/
 ```
 
 Each CSV has columns matching `ingredient_prices`: `ingredient_symbol`, `price_value`,
-`unit_id = "usd_per_ton"`, `basis = "as_fed"`, `price_type = "average_5yr"` or `"typical"`,
-`price_source = "package_seed"`, `vintage_year`.
+`unit_id = "usd_per_short_ton"`, `basis = "as_fed"`, `price_type = "average_5yr"` or
+`"typical"`, `price_source = "package_seed"`, `price_date`.
+
+For `price_type = "average_5yr"` rows, `price_date` is set to the **end of the averaging
+period** (e.g. `2023-12-31` for a 2019–2023 average). For `price_type = "typical"` rows,
+`price_date` is set to the package release date. This allows the staleness check to use
+`price_date` without needing a separate `vintage_year` column.
 
 Seed rows carry:
 - `row_origin = "package_seed"`
@@ -421,13 +462,13 @@ to flag their approximate nature.
 ### Staleness warnings
 
 A warning triggers when `ingredient_prices_resolved` would use a seed price for formulation
-and the seed row's `vintage_year` is > 2 years old. The warning identifies the specific
-ingredients so users know exactly what to replace:
+and the seed row's `price_date` is more than 2 years before today. The warning identifies the
+specific ingredients so users know exactly what to replace:
 
 ```
 Warning: Seed prices are being used for formulation.
-  LMEHCL — seed vintage 2024 (2 years old). Update with: append_rows()
-  DLMTH  — seed vintage 2024 (2 years old). Update with: append_rows()
+  LMEHCL — seed price date 2023-12-31 (2+ years old). Update with: append_rows()
+  DLMTH  — seed price date 2023-12-31 (2+ years old). Update with: append_rows()
 Run fetch_prices() or append_rows() to replace with current prices.
 ```
 

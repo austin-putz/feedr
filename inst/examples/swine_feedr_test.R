@@ -35,13 +35,13 @@ library(feedr)
 #------------------------------------------------------------------------------#
 
 # WARNING: Removing/deleting the old .duckdb files
-file.remove("~/Claude/feedr/inst/examples/swine.duckdb")
-file.remove("~/Claude/feedr/inst/examples/swine.duckdb.wal")
+file.remove("~/Projects/feedr/inst/examples/swine.duckdb")
+file.remove("~/Projects/feedr/inst/examples/swine.duckdb.wal")
 
 # initialize a fresh DB
 # WARNING: overwrite above deleting the old .duckdb file
 swine_db <- init_feedr_db(
-  path      = "~/Claude/feedr/inst/examples/swine.duckdb",
+  path      = "~/Projects/feedr/inst/examples/swine.duckdb",
   migrate   = FALSE,
   read_only = FALSE
 )
@@ -59,7 +59,7 @@ swine_db
 #   g_kg     — solver LP canonical unit for minerals/amino acids (pct x 10)
 #------------------------------------------------------------------------------#
 
-units_df <- read_csv("~/Claude/feedr/inst/examples/data/units.csv", show_col_types = FALSE)
+units_df <- read_csv("~/Projects/feedr/inst/examples/data/units.csv", show_col_types = FALSE)
 units_df
 
 swine_db |>
@@ -88,7 +88,7 @@ swine_db |>
 #   na        — Sodium              (pct; lp_unit = g/kg, factor = 10)
 #------------------------------------------------------------------------------#
 
-nutrients_df <- read_csv("~/Claude/feedr/inst/examples/data/nutrients.csv", show_col_types = FALSE)
+nutrients_df <- read_csv("~/Projects/feedr/inst/examples/data/nutrients.csv", show_col_types = FALSE)
 nutrients_df
 
 swine_db |>
@@ -110,7 +110,7 @@ swine_db |>
 
 # read CSV for nutrient unit conversions
 conversions_df <- read_csv(
-  "~/Claude/feedr/inst/examples/data/nutrient_unit_conversions.csv",
+  "~/Projects/feedr/inst/examples/data/nutrient_unit_conversions.csv",
   show_col_types = FALSE
 )
 conversions_df
@@ -154,7 +154,7 @@ swine_db |>
   )
 
 # read CSV with feeding phase information
-phases_df <- read_csv("~/Claude/feedr/inst/examples/data/swine_phases.csv", 
+phases_df <- read_csv("~/Projects/feedr/inst/examples/data/swine_phases.csv", 
                       show_col_types = FALSE)
 phases_df
 
@@ -181,7 +181,7 @@ swine_db |>
 
 # read CSV with nutrient requirements (specs) for each feeding phase (group of animals)
 requirements_df <- read_csv(
-  "~/Claude/feedr/inst/examples/data/swine_nutrient_requirements.csv",
+  "~/Projects/feedr/inst/examples/data/swine_nutrient_requirements.csv",
   show_col_types = FALSE
 )
 

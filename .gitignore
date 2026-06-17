@@ -6,4 +6,4 @@
 # directories
 temp/*
 *.Rproj
-./inst/examples/*.duckdb*
+inst/examples/*.duckdb*

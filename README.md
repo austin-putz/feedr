@@ -1,6 +1,6 @@
-<img src="logos/feedr_logo_Gemini_v1.png" align="right" width="170" alt="feedr logo" />
-
 # feedr
+
+<img src="logos/feedr_logo_Gemini_v1.png" align="right" width="170" alt="feedr logo" />
 
 **Pipe-first animal nutrition data workflows for R**
 

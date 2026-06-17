@@ -145,6 +145,18 @@ if (!is.null(sorg_final)) {
   print(sorg_final)
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
 # ── 2. CME Futures via Yahoo Finance / quantmod ───────────────────────────────
 #
 # No API key needed. Returns end-of-day prices as xts objects.
@@ -203,6 +215,15 @@ sbm_fut <- tryCatch(
   error = function(e) { message("ERROR: ", e$message); NULL }
 )
 if (!is.null(sbm_fut)) print(tail(sbm_fut, 5))
+
+
+
+
+
+
+
+
+
 
 # ── 3. World Bank Pink Sheet via httr2 ────────────────────────────────────────
 #

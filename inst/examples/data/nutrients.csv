@@ -1,0 +1,12 @@
+nutrient_id,display_name,nutrient_class,species,default_unit_id,lp_unit_id,default_basis,has_upper_bound_concern,active,locked
+ne_swine,Net Energy,energy,swine,kcal_kg,kcal_kg,as_fed,FALSE,TRUE,FALSE
+sid_lys,SID Lysine,amino_acid,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+sid_met,SID Methionine,amino_acid,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+sid_mc,SID Met+Cys,amino_acid,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+sid_thr,SID Threonine,amino_acid,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+sid_trp,SID Tryptophan,amino_acid,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+sid_ile,SID Isoleucine,amino_acid,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+sid_val,SID Valine,amino_acid,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+ca,Calcium,mineral,swine,pct,g_kg,as_fed,TRUE,TRUE,FALSE
+sttd_p,STTD Phosphorus,mineral,swine,pct,g_kg,as_fed,FALSE,TRUE,FALSE
+na,Sodium,mineral,swine,pct,g_kg,as_fed,TRUE,TRUE,FALSE

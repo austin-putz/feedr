@@ -1,0 +1,10 @@
+feeding_phase_id,species,production_class,phase_name,sort_order,description,active,avg_start_wt_kg,avg_end_wt_kg
+nursery_p1,swine,nursery,Nursery Phase 1,1,Early nursery — weaning to 10 kg (days 21–35),TRUE,6,10
+nursery_p2,swine,nursery,Nursery Phase 2,2,Late nursery — 10 to 15 kg (days 36–45),TRUE,10,15
+gf_p1,swine,grow_finish,Grow-Finish Phase 1,3,Early grow — 15 to 40 kg,TRUE,15,40
+gf_p2,swine,grow_finish,Grow-Finish Phase 2,4,Mid grow — 40 to 65 kg,TRUE,40,65
+gf_p3,swine,grow_finish,Grow-Finish Phase 3,5,Late grow — 65 to 100 kg,TRUE,65,100
+gf_p4,swine,grow_finish,Grow-Finish Phase 4,6,Finishing — 100 to 125 kg,TRUE,100,125
+gilt_dev,swine,gilt,Gilt Developer,7,Replacement gilt development — 100 to 140 kg,TRUE,100,140
+sow_gest,swine,sow,Sow Gestation,8,Gestating sow diet,TRUE,175,200
+sow_lact,swine,sow,Sow Lactation,9,Lactating sow diet,TRUE,175,200

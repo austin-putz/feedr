@@ -1,0 +1,11 @@
+nutrient_id,from_unit_id,to_unit_id,factor,chemical_form,active
+sid_lys,pct,g_kg,10,generic,TRUE
+sid_met,pct,g_kg,10,generic,TRUE
+sid_mc,pct,g_kg,10,generic,TRUE
+sid_thr,pct,g_kg,10,generic,TRUE
+sid_trp,pct,g_kg,10,generic,TRUE
+sid_ile,pct,g_kg,10,generic,TRUE
+sid_val,pct,g_kg,10,generic,TRUE
+ca,pct,g_kg,10,generic,TRUE
+sttd_p,pct,g_kg,10,generic,TRUE
+na,pct,g_kg,10,generic,TRUE

@@ -5,4 +5,4 @@
 .Rproj.user
 # directories
 temp/*
-
+*.Rproj

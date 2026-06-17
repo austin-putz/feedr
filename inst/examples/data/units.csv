@@ -1,0 +1,4 @@
+unit_id,measure,system,description
+kcal_kg,energy,metric,Kilocalories per kilogram
+pct,composition,metric,Percent (g per 100g)
+g_kg,composition,metric,Grams per kilogram

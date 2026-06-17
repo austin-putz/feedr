@@ -1,17 +1,18 @@
-#------------------------------------------------------------------------------#
-# feedr practice script — swine full program diet_spec() test
+# ==============================================================================
+# feedr example | Swine full-program diet specs
+# ==============================================================================
+# Purpose: build diet_specs for 9 swine phases from CSV requirement data.
+# Phases : 2 nursery, 4 grow-finish, gilt developer, gestation, lactation.
+# Nutrients: NE, SID amino acids, Ca, STTD P, and Na.
+# Source : approximate NRC 2012 swine values for package testing only.
 #
-# Phases: 2 nursery, 4 grow-finish, gilt developer, sow gestation, sow lactation
-# Nutrients: NE, SID Lys/Met/M+C/Thr/Trp/Ile/Val, Ca, STTD P, Na
-# Source: approximate NRC 2012 swine values (for testing only)
-#
-# Data files (temp/data/):
-#   units.csv                       — unit reference rows
-#   nutrients.csv                   — nutrient reference rows
-#   nutrient_unit_conversions.csv   — pct -> g/kg factors (all = 10)
-#   swine_phases.csv                — 9 feeding phase definitions
-#   swine_nutrient_requirements.csv — 99 rows (9 phases x 11 nutrients)
-#------------------------------------------------------------------------------#
+# Inputs: inst/examples/data/
+#   - units.csv
+#   - nutrients.csv
+#   - nutrient_unit_conversions.csv
+#   - swine_phases.csv
+#   - swine_nutrient_requirements.csv
+# ==============================================================================
 
 
 #------------------------------------------------------------------------------#
@@ -34,13 +35,13 @@ library(feedr)
 #------------------------------------------------------------------------------#
 
 # WARNING: Removing/deleting the old .duckdb files
-file.remove("~/Claude/feedr/temp/swine.duckdb")
-file.remove("~/Claude/feedr/temp/swine.duckdb.wal")
+file.remove("~/Claude/feedr/inst/examples/swine.duckdb")
+file.remove("~/Claude/feedr/inst/examples/swine.duckdb.wal")
 
 # initialize a fresh DB
 # WARNING: overwrite above deleting the old .duckdb file
 swine_db <- init_feedr_db(
-  path      = "~/Claude/feedr/temp/swine.duckdb",
+  path      = "~/Claude/feedr/inst/examples/swine.duckdb",
   migrate   = FALSE,
   read_only = FALSE
 )
@@ -58,7 +59,7 @@ swine_db
 #   g_kg     — solver LP canonical unit for minerals/amino acids (pct x 10)
 #------------------------------------------------------------------------------#
 
-units_df <- read_csv("~/Claude/feedr/temp/data/units.csv", show_col_types = FALSE)
+units_df <- read_csv("~/Claude/feedr/inst/examples/data/units.csv", show_col_types = FALSE)
 units_df
 
 swine_db |>
@@ -87,7 +88,7 @@ swine_db |>
 #   na        — Sodium              (pct; lp_unit = g/kg, factor = 10)
 #------------------------------------------------------------------------------#
 
-nutrients_df <- read_csv("~/Claude/feedr/temp/data/nutrients.csv", show_col_types = FALSE)
+nutrients_df <- read_csv("~/Claude/feedr/inst/examples/data/nutrients.csv", show_col_types = FALSE)
 nutrients_df
 
 swine_db |>
@@ -107,16 +108,19 @@ swine_db |>
 # ne_swine is omitted because kcal/kg == kcal/kg (no conversion needed).
 #------------------------------------------------------------------------------#
 
+# read CSV for nutrient unit conversions
 conversions_df <- read_csv(
-  "~/Claude/feedr/temp/data/nutrient_unit_conversions.csv",
+  "~/Claude/feedr/inst/examples/data/nutrient_unit_conversions.csv",
   show_col_types = FALSE
 )
 conversions_df
 
+# add rows to 'nutrient_unit_conversions' table
 swine_db |>
   get_table("nutrient_unit_conversions") |>
   append_rows(.rows = as.data.frame(conversions_df))
 
+# print table
 swine_db |>
   get_table("nutrient_unit_conversions") |>
   collect()
@@ -140,6 +144,7 @@ swine_db |>
 # mutate_table() adds them before loading.
 #------------------------------------------------------------------------------#
 
+# first add weight columns to the feeding_phases table
 swine_db |>
   get_table("feeding_phases") |>
   mutate_table(
@@ -148,7 +153,8 @@ swine_db |>
     .default        = FALSE
   )
 
-phases_df <- read_csv("~/Claude/feedr/temp/data/swine_phases.csv", 
+# read CSV with feeding phase information
+phases_df <- read_csv("~/Claude/feedr/inst/examples/data/swine_phases.csv", 
                       show_col_types = FALSE)
 phases_df
 
@@ -173,13 +179,16 @@ swine_db |>
 # All values are as_fed basis.
 #------------------------------------------------------------------------------#
 
+# read CSV with nutrient requirements (specs) for each feeding phase (group of animals)
 requirements_df <- read_csv(
-  "~/Claude/feedr/temp/data/swine_nutrient_requirements.csv",
+  "~/Claude/feedr/inst/examples/data/swine_nutrient_requirements.csv",
   show_col_types = FALSE
 )
 
+# show column info
 glimpse(requirements_df)
 
+# add rows to 'nutrient_requirements' for each diet you need
 swine_db |>
   get_table("nutrient_requirements") |>
   append_rows(.rows = as.data.frame(requirements_df))
@@ -212,6 +221,7 @@ swine_db |>
 # them all at once. diet_spec() handles the grouping internally.
 #------------------------------------------------------------------------------#
 
+# run diet_spec() function on passed data from nutrient_requirements
 spec_tbl <- swine_db |>
   get_table("nutrient_requirements") |>
   dplyr::filter(
@@ -222,6 +232,9 @@ spec_tbl <- swine_db |>
     basis  = "as_fed",
     source = "NRC2012"
   )
+
+# print
+spec_tbl |> collect() |> print(width=Inf)
 
 # The returned feedr_tbl is lazy — collect() materializes it
 spec_tbl |>
@@ -315,6 +328,7 @@ preview <- swine_db |>
 
 # Plain tibble — shows LP values but was not saved
 glimpse(preview)
+
 
 
 

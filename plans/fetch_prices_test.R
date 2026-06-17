@@ -241,9 +241,11 @@ wb_indicators <- c(
   CORN    = "PMAIZMTUSD",   # Maize (corn), US Gulf
   SBM48   = "PSOYMTUSD",    # Soybean meal, 48% protein
   SBN     = "PSOYBUSUSD",   # Soybeans, US
-  HRW     = "PWHEAMTUSD",   # Wheat, Hard Red Winter
-  FMEAL   = "PFISHMEAL",    # Fish meal, 65% protein — VERIFY this code
-  PALMOIL = "PPALMOILUSD"   # Palm oil
+  HRW     = "PWHEAMTUSD"    # Wheat, Hard Red Winter
+  # FMEAL removed: fish meal is NOT in the World Bank Open Data API.
+  # The Pink Sheet Excel file has it, but it uses an unstable bulk-download URL.
+  # FMEAL moved to "must enter manually" in the plan.
+  # PALMOIL removed: palm oil is not a primary US swine diet ingredient.
 )
 
 for (sym in names(wb_indicators)) {
@@ -277,23 +279,46 @@ for (sym in names(wb_indicators)) {
   })
 }
 
-# FMEAL indicator is uncertain — also try alternate code
-cat("\n--- Fish meal: trying alternate WB indicator codes ---\n")
-fmeal_codes <- c("PFISHMEAL", "PFISH", "PFISHUSD", "PFISHMEALUSD")
-for (code in fmeal_codes) {
-  tryCatch({
-    resp <- request("https://api.worldbank.org/v2/en/indicator") |>
-      req_url_path_append(code) |>
-      req_url_query(format = "json", per_page = 2, mrv = 2) |>
-      req_perform()
-    data <- resp_body_json(resp)
-    obs  <- data[[2]]
-    n    <- if (is.null(obs)) 0 else length(obs)
-    cat(sprintf("  %s: %d observation(s) returned\n", code, n))
-  }, error = function(e) {
-    cat(sprintf("  %s: ERROR — %s\n", code, e$message))
-  })
-}
+# FMEAL: search the World Bank indicator catalog for anything containing "fish"
+# This finds the real code rather than guessing.
+cat("\n--- Fish meal: searching World Bank indicator catalog for 'fish' ---\n")
+tryCatch({
+  resp <- request("https://api.worldbank.org/v2/indicator") |>
+    req_url_query(format = "json", q = "fish", per_page = 50) |>
+    req_perform()
+  result <- resp_body_json(resp)
+  indicators <- result[[2]]
+  cat(sprintf("  Found %d indicator(s) matching 'fish':\n", length(indicators)))
+  for (ind in indicators) {
+    cat(sprintf("    %-30s  %s\n", ind$id, ind$name))
+  }
+}, error = function(e) {
+  cat(sprintf("  ERROR searching catalog: %s\n", e$message))
+})
+
+# Also search for "fishmeal" specifically
+cat("\n--- World Bank indicator catalog: search 'fishmeal' ---\n")
+tryCatch({
+  resp <- request("https://api.worldbank.org/v2/indicator") |>
+    req_url_query(format = "json", q = "fishmeal", per_page = 20) |>
+    req_perform()
+  result <- resp_body_json(resp)
+  indicators <- result[[2]]
+  cat(sprintf("  Found %d indicator(s):\n", length(indicators)))
+  for (ind in indicators) {
+    cat(sprintf("    %-30s  %s\n", ind$id, ind$name))
+  }
+}, error = function(e) {
+  cat(sprintf("  ERROR: %s\n", e$message))
+})
+
+# Once you find the correct id from above, paste it here and run to confirm it returns data:
+# fmeal_code <- "PASTE_CODE_HERE"
+# resp <- request("https://api.worldbank.org/v2/en/indicator") |>
+#   req_url_path_append(fmeal_code) |>
+#   req_url_query(format = "json", per_page = 6, mrv = 6) |>
+#   req_perform()
+# print(resp_body_json(resp)[[2]])
 
 # ── 4. Coverage summary ───────────────────────────────────────────────────────
 
@@ -310,8 +335,8 @@ SRW         | yes (wheat) | ZW=F          | —          | NASS lumps all wheat
 MILO/SORG   | yes ($/cwt?)| —             | —          | CHECK unit — may be $/cwt
 OATS        | yes         | ZO=F          | —          |
 BARLY       | yes         | —             | —          | NASS only; no futures
-FMEAL       | —           | —             | PFISHMEAL? | Verify WB indicator code
-DDGS        | —           | —             | —          | USDA AMS deferred
+FMEAL       | —           | —             | —          | NOT in WB API; manual entry only
+DDGS        | —           | —             | —          | USDA AMS deferred; manual entry
 CNOLA       | —           | RS=F (CAD)    | —          | FX dependency deferred
 
 Manual entry only (no public source):

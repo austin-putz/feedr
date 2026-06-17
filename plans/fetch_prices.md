@@ -282,14 +282,21 @@ data is stale.
 
 **Pink Sheet series relevant to feedr:**
 
-| series | commodity |
-|---|---|
-| `MAIZE` | Yellow maize, US Gulf |
-| `SOYBEAN_MEAL` | Soybean meal, 48% protein, US |
-| `SOYBEANS` | Soybeans, US |
-| `WHEAT_US_HRW` | Wheat, Hard Red Winter |
-| `FISHMEAL` | Fish meal, any origin, 65% protein |
-| `PALM_OIL` | Palm oil (proxy for fat sources) |
+| WB indicator | commodity | notes |
+|---|---|---|
+| `PMAIZMTUSD` | Yellow maize, US Gulf | Supplementary to NASS/CME |
+| `PSOYMTUSD` | Soybean meal, 48% protein | Supplementary to CME ZM=F |
+| `PSOYBUSUSD` | Soybeans, US | Supplementary to NASS/CME |
+| `PWHEAMTUSD` | Wheat, Hard Red Winter | Supplementary to NASS/CME |
+
+**Important limitation confirmed by testing:** Fish meal (`FMEAL`) is not in the World Bank
+Open Data API (`api.worldbank.org/v2`). The Pink Sheet Excel file contains it, but that
+file uses an unstable bulk-download URL. `FMEAL` is moved to "must enter manually."
+
+**World Bank's role in practice:** All four indicators above are already covered by USDA NASS
+(cash) and CME (futures). World Bank is useful as a supplementary international reference
+or as a fallback when NASS data has a lag, but it provides no unique ingredient coverage for
+US swine diets.
 
 ### 3.4 USDA AMS Market News (supplemental, lower priority)
 
@@ -306,15 +313,15 @@ data is stale.
 
 | ingredient class | examples | source |
 |---|---|---|
-| Feed grains | Corn, sorghum, oats, barley | USDA NASS, CME/Yahoo |
+| Feed grains | Corn, sorghum, oats, barley | USDA NASS; CME/Yahoo for corn, oats |
 | Oilseeds | Soybeans | USDA NASS, CME/Yahoo |
-| Oilseed meals | Soybean meal 48% | CME/Yahoo (ZM), World Bank |
-| Fish meal | Peruvian/any origin | World Bank Pink Sheet |
+| Oilseed meals | Soybean meal 48% | CME/Yahoo (`ZM=F`); World Bank supplementary |
 
 ### Must be entered by user (no free public source)
 
 | ingredient class | examples | why |
 |---|---|---|
+| Fish meal | `FMEAL` | Not in World Bank API; Pink Sheet Excel URL unstable |
 | Synthetic amino acids | L-Lysine HCl, DL-Methionine, L-Threonine, L-Tryptophan | Industrial contract pricing; no exchange |
 | Vitamins | A, D3, E, K, B-complex premixes | Proprietary; no exchange |
 | Enzymes | Phytase, xylanase, protease | Proprietary product |
@@ -339,17 +346,16 @@ as a future extension when project-specific ingredient aliases are needed.
 
 ### Mapping table structure
 
-| ingredient_symbol | usda_nass_commodity | cme_ticker | world_bank_series | bu_weight_lb | notes |
+| ingredient_symbol | usda_nass_commodity | cme_ticker | wb_indicator | bu_weight_lb | notes |
 |---|---|---|---|---|---|
-| `CORN` | `CORN, GRAIN` | `ZC=F` | `MAIZE` | 56 | Yellow #2 reference grade |
-| `SBN` | `SOYBEANS` | `ZS=F` | `SOYBEANS` | 60 | |
-| `SBM48` | — | `ZM=F` | `SOYBEAN_MEAL` | — | Price in USD/ton already |
-| `HRW` | `WHEAT` | `KE=F` | `WHEAT_US_HRW` | 60 | Hard Red Winter |
-| `SRW` | `WHEAT` | `ZW=F` | — | 60 | Soft Red Winter |
-| `MILO` | `SORGHUM` | — | — | — | NASS only; unit is $/cwt (× 20 → $/short ton); no futures |
+| `CORN` | `CORN` | `ZC=F` | `PMAIZMTUSD` | 56 | Yellow #2 reference grade |
+| `SBN` | `SOYBEANS` | `ZS=F` | `PSOYBUSUSD` | 60 | |
+| `SBM48` | — | `ZM=F` | `PSOYMTUSD` | — | CME quoted in $/short ton already |
+| `HRW` | `WHEAT` | `KE=F` | `PWHEAMTUSD` | 60 | Hard Red Winter |
+| `SRW` | `WHEAT` | `ZW=F` | — | 60 | Soft Red Winter; NASS lumps all wheat |
+| `MILO` | `SORGHUM` | — | — | — | NASS only; unit is $/cwt (× 20 → $/short ton) |
 | `OATS` | `OATS` | `ZO=F` | — | 32 | |
 | `BARLY` | `BARLEY` | — | — | 48 | NASS only; no futures |
-| `FMEAL` | — | — | `FISHMEAL` | — | World Bank only |
 
 Ingredients absent from this map return `status = "unmapped"` with an informative message.
 

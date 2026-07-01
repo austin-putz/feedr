@@ -1,6 +1,7 @@
 # ==============================================================================
 # feedr example | Swine full-program diet specs
 # ==============================================================================
+# 
 # Purpose: build diet_specs for 9 swine phases from CSV requirement data.
 # Phases : 2 nursery, 4 grow-finish, gilt developer, gestation, lactation.
 # Nutrients: NE, SID amino acids, Ca, STTD P, and Na.
@@ -13,7 +14,6 @@
 #   - swine_phases.csv
 #   - swine_nutrient_requirements.csv
 # ==============================================================================
-
 
 #------------------------------------------------------------------------------#
 # load libraries
@@ -29,7 +29,6 @@ library(tidyverse)
 # load feedr
 library(feedr)
 
-
 #------------------------------------------------------------------------------#
 # initialize database (always fresh)
 #------------------------------------------------------------------------------#
@@ -41,14 +40,13 @@ file.remove("~/Projects/feedr/inst/examples/swine.duckdb.wal")
 # initialize a fresh DB
 # WARNING: overwrite above deleting the old .duckdb file
 swine_db <- init_feedr_db(
-  path      = "~/Projects/feedr/inst/examples/swine.duckdb",
+  path      = "~/Claude/feedr/inst/examples/swine.duckdb",
   migrate   = FALSE,
   read_only = FALSE
 )
 
 # print object
 swine_db
-
 
 #------------------------------------------------------------------------------#
 # Step 1: Load units
@@ -59,7 +57,7 @@ swine_db
 #   g_kg     — solver LP canonical unit for minerals/amino acids (pct x 10)
 #------------------------------------------------------------------------------#
 
-units_df <- read_csv("~/Projects/feedr/inst/examples/data/units.csv", show_col_types = FALSE)
+units_df <- read_csv("~/Claude/feedr/inst/examples/data/units.csv", show_col_types = FALSE)
 units_df
 
 swine_db |>
@@ -69,7 +67,6 @@ swine_db |>
 swine_db |>
   get_table("units") |>
   collect()
-
 
 #------------------------------------------------------------------------------#
 # Step 2: Load nutrients
@@ -88,7 +85,7 @@ swine_db |>
 #   na        — Sodium              (pct; lp_unit = g/kg, factor = 10)
 #------------------------------------------------------------------------------#
 
-nutrients_df <- read_csv("~/Projects/feedr/inst/examples/data/nutrients.csv", show_col_types = FALSE)
+nutrients_df <- read_csv("~/Claude/feedr/inst/examples/data/nutrients.csv", show_col_types = FALSE)
 nutrients_df
 
 swine_db |>
@@ -110,7 +107,7 @@ swine_db |>
 
 # read CSV for nutrient unit conversions
 conversions_df <- read_csv(
-  "~/Projects/feedr/inst/examples/data/nutrient_unit_conversions.csv",
+  "~/Claude/feedr/inst/examples/data/nutrient_unit_conversions.csv",
   show_col_types = FALSE
 )
 conversions_df
@@ -154,7 +151,7 @@ swine_db |>
   )
 
 # read CSV with feeding phase information
-phases_df <- read_csv("~/Projects/feedr/inst/examples/data/swine_phases.csv", 
+phases_df <- read_csv("~/Claude/feedr/inst/examples/data/swine_phases.csv", 
                       show_col_types = FALSE)
 phases_df
 
@@ -181,7 +178,7 @@ swine_db |>
 
 # read CSV with nutrient requirements (specs) for each feeding phase (group of animals)
 requirements_df <- read_csv(
-  "~/Projects/feedr/inst/examples/data/swine_nutrient_requirements.csv",
+  "~/Claude/feedr/inst/examples/data/swine_nutrient_requirements.csv",
   show_col_types = FALSE
 )
 
@@ -233,8 +230,24 @@ spec_tbl <- swine_db |>
     source = "NRC2012"
   )
 
-# print
+# Writes to:
+#  - diet_specs
+#  - diet_spec_nutrients
+
+# print all columns with sample of rows
 spec_tbl |> collect() |> print(width=Inf)
+
+# print all columns with sample of rows
+swine_db |>
+  get_table("diet_specs") |> 
+  collect() |> 
+  print(width=Inf)
+
+# print all columns with sample of rows
+swine_db |>
+  get_table("diet_spec_nutrients") |> 
+  collect() |> 
+  print(width=Inf)
 
 # The returned feedr_tbl is lazy — collect() materializes it
 spec_tbl |>
@@ -329,7 +342,7 @@ preview <- swine_db |>
 # Plain tibble — shows LP values but was not saved
 glimpse(preview)
 
-
+preview |> collect() |> print(width=Inf)
 
 
 
